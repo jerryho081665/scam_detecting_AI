@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,13 +29,15 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,11 +45,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign // Added import
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.tooling.preview.Preview // Added import
 import com.example.testing.ui.theme.TestingTheme
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
@@ -62,14 +63,12 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                 ) { innerPadding ->
                     SpeechToTextScreen(
-                        modifier = Modifier.padding(innerPadding)
-                    )
+                        modifier = Modifier.padding(innerPadding))
                 }
             }
         }
     }
 }
-
 
 @OptIn(
     ExperimentalPermissionsApi::class,
@@ -86,12 +85,16 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
         onDispose { speechRecognizer.destroy() }
     }
 
+    val languageButtonText = when (speechRecognizer.currentLanguage.value) {
+        "zh-TW" -> "中文"
+        else -> "EN"
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // Current transcription section
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -99,6 +102,17 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                 .background(MaterialTheme.colorScheme.surfaceContainer)
                 .padding(16.dp)
         ) {
+            Button(
+                onClick = { speechRecognizer.toggleLanguage() },
+                modifier = Modifier.align(Alignment.TopEnd),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            ) {
+                Text(text = languageButtonText, color = Color.White)
+            }
+
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "Current Transcription",
@@ -109,7 +123,6 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Display final recognized text
                 Text(
                     text = speechRecognizer.recognizedText.value,
                     fontSize = 20.sp,
@@ -117,7 +130,6 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Display real-time partial text in different color
                 if (speechRecognizer.isRecording.value && speechRecognizer.partialText.value.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
@@ -131,18 +143,16 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Record button
                 Button(
                     onClick = {
                         if (recordAudioPermission.status.isGranted) {
                             if (speechRecognizer.isRecording.value) {
                                 speechRecognizer.stopListening()
-                                speechRecognizer.isRecording.value=false
+                                speechRecognizer.isRecording.value = false
                             } else {
-                                speechRecognizer.isRecording.value=true
+                                speechRecognizer.isRecording.value = true
                                 speechRecognizer.startListening()
                             }
-
                         } else {
                             recordAudioPermission.launchPermissionRequest()
                         }
@@ -185,7 +195,6 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // History header with clear button
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -201,25 +210,24 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                 Button(
                     onClick = { speechRecognizer.clearHistory() },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = Color.White
                     ),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    // Using system clear icon instead of material icon
                     Icon(
                         painter = painterResource(id = android.R.drawable.ic_menu_close_clear_cancel),
                         contentDescription = "Clear history",
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
-                    Text("Clear")
+                    Text(text = "Clear", color = Color.White)
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // History list
         if (speechRecognizer.transcriptionHistory.value.isEmpty()) {
             Box(
                 modifier = Modifier
@@ -239,7 +247,12 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                     .weight(1f)
             ) {
                 items(speechRecognizer.transcriptionHistory.value) { transcription ->
-                    TranscriptionItem(transcription)
+                    TranscriptionItem(
+                        transcription = transcription,
+                        onUpdate = { newText ->
+                            speechRecognizer.updateTranscription(transcription.id, newText)
+                        }
+                    )
                     Spacer(modifier = Modifier.height(8.dp))
                 }
             }
@@ -248,9 +261,17 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun TranscriptionItem(transcription: Transcription) {
+fun TranscriptionItem(
+    transcription: Transcription,
+    onUpdate: (String) -> Unit
+) {
+    var isEditing by remember { mutableStateOf(false) }
+    var editedText by remember { mutableStateOf(transcription.text) }
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { isEditing = true },
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
@@ -260,24 +281,55 @@ fun TranscriptionItem(transcription: Transcription) {
         Column(
             modifier = Modifier.padding(16.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            if (isEditing) {
+                OutlinedTextField(
+                    value = editedText,
+                    onValueChange = { editedText = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodyLarge,
+                    singleLine = false,
+                    maxLines = 3
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Button(
+                        onClick = {
+                            onUpdate(editedText)
+                            isEditing = false
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    ) {
+                        Text("Save")
+                    }
+
+                    Spacer(modifier = Modifier.size(8.dp))
+
+                    Button(
+                        onClick = {
+                            editedText = transcription.text
+                            isEditing = false
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                        )
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            } else {
                 Text(
-                    text = transcription.timestamp,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    text = transcription.text,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = transcription.text,
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.fillMaxWidth()
-            )
         }
     }
 }

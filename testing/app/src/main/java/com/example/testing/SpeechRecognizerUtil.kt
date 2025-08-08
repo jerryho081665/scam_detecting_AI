@@ -1,32 +1,26 @@
 package com.example.testing
 
 import android.content.Context
-import android.content.Intent // Added import
-import android.os.Bundle // Added import
+import android.content.Intent
+import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
-import java.util.Date
-import java.text.SimpleDateFormat
+import java.util.UUID
 
-// Data class to store transcription results
 data class Transcription(
+    val id: String = UUID.randomUUID().toString(),
     val text: String,
-    val timestamp: String = SimpleDateFormat("HH:mm:ss").format(Date())
 )
 
 class SpeechRecognizerUtil(context: Context) {
     private val speechRecognizer: SpeechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
-
-    // States
+    val currentLanguage = mutableStateOf("en-US")
     val isRecording = mutableStateOf(false)
     val recognizedText = mutableStateOf("")
     val partialText = mutableStateOf("")
     val errorState = mutableStateOf<String?>(null)
-
-    // History of transcriptions
     val transcriptionHistory = mutableStateOf<List<Transcription>>(emptyList())
 
     private val recognitionListener = object : RecognitionListener {
@@ -45,7 +39,7 @@ class SpeechRecognizerUtil(context: Context) {
         }
 
         override fun onError(error: Int) {
-            if(isRecording.value == true){
+            if(isRecording.value){
                 startListening()
             }
         }
@@ -57,10 +51,9 @@ class SpeechRecognizerUtil(context: Context) {
                     recognizedText.value = finalText
                     partialText.value = ""
 
-                    // Add to history
                     if (finalText.isNotBlank()) {
                         val newHistory = transcriptionHistory.value.toMutableList()
-                        newHistory.add(0, Transcription(finalText)) // Add at top
+                        newHistory.add(0, Transcription(text = finalText))
                         transcriptionHistory.value = newHistory
                     }
                 }
@@ -87,22 +80,35 @@ class SpeechRecognizerUtil(context: Context) {
         errorState.value = null
         partialText.value = ""
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, currentLanguage.value)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-
-
         }
         speechRecognizer.startListening(intent)
+    }
+
+    fun toggleLanguage() {
+        currentLanguage.value = when (currentLanguage.value) {
+            "en-US" -> "zh-TW"
+            else -> "en-US"
+        }
+    }
+
+    fun updateTranscription(id: String, newText: String) {
+        transcriptionHistory.value = transcriptionHistory.value.map {
+            if (it.id == id) it.copy(text = newText) else it
+        }
     }
 
     fun stopListening() {
         speechRecognizer.stopListening()
     }
+
     fun clearHistory() {
         transcriptionHistory.value = emptyList()
     }
+
     fun destroy() {
         speechRecognizer.destroy()
     }
