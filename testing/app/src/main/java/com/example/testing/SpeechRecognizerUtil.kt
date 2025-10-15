@@ -35,13 +35,22 @@ class SpeechRecognizerUtil(context: Context) {
         override fun onBufferReceived(buffer: ByteArray?) {}
 
         override fun onEndOfSpeech() {
-            startListening()
         }
 
         override fun onError(error: Int) {
-            if(isRecording.value){
-                startListening()
+            errorState.value = when (error) {
+                SpeechRecognizer.ERROR_CLIENT -> "error"
+                SpeechRecognizer.ERROR_NO_MATCH -> ""
+                else -> "Unknown error"
             }
+            if(isRecording.value){
+                isRecording.value = false
+                if (error != SpeechRecognizer.ERROR_CLIENT) {
+
+                    startListening()
+                }
+            }
+
         }
 
         override fun onResults(results: Bundle?) {
@@ -58,7 +67,8 @@ class SpeechRecognizerUtil(context: Context) {
                     }
                 }
             }
-            isRecording.value = false
+
+            startListening()
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
@@ -82,10 +92,17 @@ class SpeechRecognizerUtil(context: Context) {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, currentLanguage.value)
+
+
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+
         }
         speechRecognizer.startListening(intent)
+    }
+
+    fun deleteTranscription(id: String) {
+        transcriptionHistory.value = transcriptionHistory.value.filter { it.id != id }
     }
 
     fun toggleLanguage() {

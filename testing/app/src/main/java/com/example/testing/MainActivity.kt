@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,12 +29,14 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +55,8 @@ import com.example.testing.ui.theme.TestingTheme
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
+import kotlinx.coroutines.delay
+import kotlin.random.Random
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,8 +86,19 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
     val recordAudioPermission = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
     val speechRecognizer = remember { SpeechRecognizerUtil(context) }
 
+    // State for meter percentage
+    var meterPercentage by remember { mutableStateOf(0) }
+
     DisposableEffect(Unit) {
         onDispose { speechRecognizer.destroy() }
+    }
+
+    // Effect to update meter percentage every second
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000) // Update every second
+            meterPercentage = Random.nextInt(0, 101) // Random percentage between 0-100
+        }
     }
 
     val languageButtonText = when (speechRecognizer.currentLanguage.value) {
@@ -147,8 +163,9 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                     onClick = {
                         if (recordAudioPermission.status.isGranted) {
                             if (speechRecognizer.isRecording.value) {
-                                speechRecognizer.stopListening()
                                 speechRecognizer.isRecording.value = false
+                                speechRecognizer.stopListening()
+
                             } else {
                                 speechRecognizer.isRecording.value = true
                                 speechRecognizer.startListening()
@@ -251,10 +268,101 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                         transcription = transcription,
                         onUpdate = { newText ->
                             speechRecognizer.updateTranscription(transcription.id, newText)
+                        },
+                        onDelete = {
+                            speechRecognizer.deleteTranscription(transcription.id)
                         }
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                 }
+            }
+        }
+
+        // Meter Bar at the bottom
+        Spacer(modifier = Modifier.height(16.dp))
+        MeterBar(percentage = meterPercentage)
+    }
+}
+
+@Composable
+fun MeterBar(percentage: Int) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Audio Level",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Text(
+                    text = "$percentage%",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Progress bar
+            LinearProgressIndicator(
+                progress = percentage / 100f,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(12.dp)
+                    .clip(RoundedCornerShape(6.dp)),
+                color = when {
+                    percentage < 30 -> Color.Green
+                    percentage < 70 -> Color.Yellow
+                    else -> Color.Red
+                },
+                trackColor = MaterialTheme.colorScheme.surfaceContainerLow
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Level indicators
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Low",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (percentage < 30) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+
+                Text(
+                    text = "Medium",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (percentage in 30..69) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+
+                Text(
+                    text = "High",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (percentage >= 70) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
             }
         }
     }
@@ -263,15 +371,15 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
 @Composable
 fun TranscriptionItem(
     transcription: Transcription,
-    onUpdate: (String) -> Unit
+    onUpdate: (String) -> Unit,
+    onDelete: () -> Unit
 ) {
     var isEditing by remember { mutableStateOf(false) }
     var editedText by remember { mutableStateOf(transcription.text) }
 
     Card(
         modifier = Modifier
-            .fillMaxWidth()
-            .clickable { isEditing = true },
+            .fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
@@ -306,7 +414,7 @@ fun TranscriptionItem(
                             containerColor = MaterialTheme.colorScheme.primaryContainer
                         )
                     ) {
-                        Text("Save")
+                        Text("Save", color = Color.White)
                     }
 
                     Spacer(modifier = Modifier.size(8.dp))
@@ -320,15 +428,47 @@ fun TranscriptionItem(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                         )
                     ) {
-                        Text("Cancel")
+                        Text("Cancel", color = Color.White)
                     }
                 }
             } else {
-                Text(
-                    text = transcription.text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = transcription.text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { isEditing = true }
+                            .padding(end = 8.dp)
+                    )
+
+                    Column {
+                        // Edit button
+                        Icon(
+                            painter = painterResource(id = android.R.drawable.ic_menu_edit),
+                            contentDescription = "Edit",
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clickable { isEditing = true }
+                                .padding(bottom = 8.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+
+                        // Delete button
+                        Icon(
+                            painter = painterResource(id = android.R.drawable.ic_menu_delete),
+                            contentDescription = "Delete",
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clickable { onDelete() },
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
             }
         }
     }
