@@ -2,45 +2,19 @@ package com.example.testing
 
 import android.Manifest
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,8 +29,7 @@ import com.example.testing.ui.theme.TestingTheme
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
-import kotlinx.coroutines.delay
-import kotlin.random.Random
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,40 +37,62 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             TestingTheme {
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                ) { innerPadding ->
-                    SpeechToTextScreen(
-                        modifier = Modifier.padding(innerPadding))
+                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                    SpeechToTextScreen(modifier = Modifier.padding(innerPadding))
                 }
             }
         }
     }
 }
 
-@OptIn(
-    ExperimentalPermissionsApi::class,
-    ExperimentalMaterial3Api::class,
-    ExperimentalFoundationApi::class
-)
+@OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SpeechToTextScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val recordAudioPermission = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
     val speechRecognizer = remember { SpeechRecognizerUtil(context) }
 
-    // State for meter percentage
-    var meterPercentage by remember { mutableStateOf(0) }
+    // Scope for running background network tasks
+    val scope = rememberCoroutineScope()
+
+    // State for Scam Risk (0 to 100)
+    var riskPercentage by remember { mutableIntStateOf(0) }
+    var riskStatusText by remember { mutableStateOf("Waiting for input...") }
+
+    // Function to call Python
+    fun checkScamRisk(textToCheck: String) {
+        scope.launch {
+            try {
+                riskStatusText = "Analyzing..."
+                val request = ScamCheckRequest(message = textToCheck)
+                val response = RetrofitClient.instance.checkMessage(request)
+
+                // Convert 0.95 to 95
+                riskPercentage = (response.scam_probability * 100).toInt()
+
+                riskStatusText = if(response.is_risk) "HIGH RISK DETECTED" else "Safe"
+
+                Log.d("ScamCheck", "Risk: $riskPercentage%")
+            } catch (e: Exception) {
+                Log.e("ScamCheck", "Error: ${e.message}")
+                riskStatusText = "Connection Error"
+                // If error, maybe set risk to 0 or keep previous
+            }
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose { speechRecognizer.destroy() }
     }
 
-    // Effect to update meter percentage every second
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(1000) // Update every second
-            meterPercentage = Random.nextInt(0, 101) // Random percentage between 0-100
+    // TRIGGER: Whenever a new item is added to history (a sentence is finished)
+    // We check the most recent one (index 0)
+    LaunchedEffect(speechRecognizer.transcriptionHistory.value) {
+        val history = speechRecognizer.transcriptionHistory.value
+        if (history.isNotEmpty()) {
+            // Get the newest sentence
+            val latestSentence = history.first().text
+            checkScamRisk(latestSentence)
         }
     }
 
@@ -165,7 +160,6 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                             if (speechRecognizer.isRecording.value) {
                                 speechRecognizer.isRecording.value = false
                                 speechRecognizer.stopListening()
-
                             } else {
                                 speechRecognizer.isRecording.value = true
                                 speechRecognizer.startListening()
@@ -196,15 +190,6 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                             MaterialTheme.colorScheme.error
                         else
                             MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                speechRecognizer.errorState.value?.let { error ->
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = error,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(4.dp)
                     )
                 }
             }
@@ -249,7 +234,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 32.dp),
+                    .weight(1f),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -278,14 +263,14 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        // Meter Bar at the bottom
+        // Meter Bar at the bottom (Now displays RISK)
         Spacer(modifier = Modifier.height(16.dp))
-        MeterBar(percentage = meterPercentage)
+        MeterBar(percentage = riskPercentage, statusText = riskStatusText)
     }
 }
 
 @Composable
-fun MeterBar(percentage: Int) {
+fun MeterBar(percentage: Int, statusText: String) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -305,7 +290,7 @@ fun MeterBar(percentage: Int) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Audio Level",
+                    text = "Scam Risk Level",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface
@@ -315,7 +300,7 @@ fun MeterBar(percentage: Int) {
                     text = "$percentage%",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = if(percentage > 50) Color.Red else MaterialTheme.colorScheme.primary
                 )
             }
 
@@ -329,41 +314,22 @@ fun MeterBar(percentage: Int) {
                     .height(12.dp)
                     .clip(RoundedCornerShape(6.dp)),
                 color = when {
-                    percentage < 30 -> Color.Green
-                    percentage < 70 -> Color.Yellow
-                    else -> Color.Red
+                    percentage < 30 -> Color.Green   // Safe
+                    percentage < 70 -> Color.Yellow  // Caution
+                    else -> Color.Red                // DANGER
                 },
                 trackColor = MaterialTheme.colorScheme.surfaceContainerLow
             )
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Level indicators
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "Low",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (percentage < 30) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                )
-
-                Text(
-                    text = "Medium",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (percentage in 30..69) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                )
-
-                Text(
-                    text = "High",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (percentage >= 70) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                )
-            }
+            // Status Text
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (percentage >= 50) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
         }
     }
 }
@@ -447,7 +413,6 @@ fun TranscriptionItem(
                     )
 
                     Column {
-                        // Edit button
                         Icon(
                             painter = painterResource(id = android.R.drawable.ic_menu_edit),
                             contentDescription = "Edit",
@@ -458,7 +423,6 @@ fun TranscriptionItem(
                             tint = MaterialTheme.colorScheme.primary
                         )
 
-                        // Delete button
                         Icon(
                             painter = painterResource(id = android.R.drawable.ic_menu_delete),
                             contentDescription = "Delete",
