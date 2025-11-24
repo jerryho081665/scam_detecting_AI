@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZeroSCAM - 智能生活助手 | App 下載</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts (Noto Sans TC) -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Config & Custom Styles -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Noto Sans TC"', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#eff6ff',
+                            100: '#dbeafe',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                            900: '#1e3a8a',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* 自定義捲軸隱藏但保持功能 (用於截圖區) */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        
+        /* 簡單的淡入動畫類 */
+        .fade-in-section {
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+            will-change: opacity, visibility;
+        }
+        .fade-in-section.is-visible {
+            opacity: 1;
+            transform: none;
+        }
+
+        /* 手機邊框模擬 */
+        .phone-frame {
+            border: 12px solid #1f2937;
+            border-radius: 2.5rem;
+            overflow: hidden;
+            position: relative;
+            background: #000;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        .phone-notch {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 50%;
+            height: 25px;
+            background: #1f2937;
+            border-bottom-left-radius: 12px;
+            border-bottom-right-radius: 12px;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body class="font-sans text-gray-800 bg-gray-50 antialiased overflow-x-hidden">
+
+    <!-- 導航欄 -->
+    <nav class="fixed w-full z-50 bg-white/90 backdrop-blur-md shadow-sm transition-all duration-300" id="navbar">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-20">
+                <!-- Logo -->
+                <div class="flex-shrink-0 flex items-center gap-2 cursor-pointer" onclick="window.scrollTo(0,0)">
+                    <div class="w-10 h-10 bg-brand-600 rounded-xl flex items-center justify-center text-white text-xl">
+                        <i class="fa-solid fa-bolt"></i>
+                    </div>
+                    <span class="font-bold text-2xl text-gray-900 tracking-tight">ZeroSCAM</span>
+                </div>
+
+               
+
+                <!-- Mobile Menu Button -->
+                <div class="md:hidden flex items-center">
+                    <button id="mobile-menu-btn" class="text-gray-600 hover:text-brand-600 focus:outline-none">
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mobile Menu Panel -->
+        <div id="mobile-menu" class="hidden md:hidden bg-white border-t border-gray-100 absolute w-full shadow-lg">
+       
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden bg-gradient-to-br from-brand-50 to-white">
+        <!-- 背景裝飾圓形 -->
+        <div class="absolute top-0 right-0 -mr-20 -mt-20 w-96 h-96 rounded-full bg-brand-200 opacity-30 blur-3xl"></div>
+        <div class="absolute bottom-0 left-0 -ml-20 -mb-20 w-80 h-80 rounded-full bg-purple-200 opacity-30 blur-3xl"></div>
+
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+                <!-- Text Content -->
+                <div class="text-center lg:text-left fade-in-section">
+                    <div class="inline-block px-4 py-1.5 bg-brand-100 text-brand-700 rounded-full text-sm font-semibold mb-6">
+                        🚀 2025 年度最具潛力工具 APP
+                    </div>
+                    <h1 class="text-4xl md:text-6xl font-extrabold text-gray-900 leading-tight mb-6">
+                        讓詐騙來電 <br>
+                        <span class="text-brand-600">無處躲藏</span>
+                    </h1>
+                
+                    <!-- Download Buttons -->
+                    <div class="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start" id="download-area">
+                       
+                        <a href="#" class="flex items-center justify-center bg-gray-900 text-white px-6 py-3 rounded-xl hover:bg-gray-800 transition shadow-lg transform hover:-translate-y-1">
+                            <i class="fa-brands fa-android text-2xl mr-3"></i>
+                            <div class="text-left">
+                                <div class="text-xs text-gray-300">.apk安裝檔</div>
+                                <div class="text-lg font-bold font-sans">下載</div>
+                            </div>
+                        </a>
+                    </div>
+                    
+                    <div class="mt-6 flex items-center justify-center lg:justify-start gap-4 text-sm text-gray-500">
+                        <div class="flex items-center">
+                            <i class="fa-solid fa-star text-yellow-400 mr-1"></i>
+                            <span>4.9 評分</span>
+                        </div>
+                        
+                    </div>
+                </div>
+
+
+            </div>
+        </div>
+    </section>
+
+
+    <!-- Features Section -->
+    <section id="features" class="py-20 bg-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center max-w-3xl mx-auto mb-16 fade-in-section">
+                <h2 class="text-brand-600 font-semibold tracking-wide uppercase text-sm mb-2">強大功能</h2>
+                <h3 class="text-3xl font-bold text-gray-900 sm:text-4xl">為何使用 ZeroSCAM？</h3>
+                <p class="mt-4 text-xl text-gray-500">不僅僅判斷來電安全性，<br>還為您提供針對性防騙建議。</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-10">
+                <!-- Feature 1 -->
+                <div class="bg-gray-50 rounded-2xl p-8 hover:shadow-xl transition duration-300 fade-in-section">
+                    <div class="w-14 h-14 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center text-2xl mb-6">
+                        <i class="fa-solid fa-bell"></i>
+                    </div>
+                    <h4 class="text-xl font-bold text-gray-900 mb-3">來電 AI 風險判斷</h4>
+                    <p class="text-gray-600 leading-relaxed">
+                       透過 AI 智能分析來電內容，對高風險通話進行警示。
+
+                    </p>
+                </div>
+
+                <!-- Feature 2 -->
+                <div class="bg-gray-50 rounded-2xl p-8 hover:shadow-xl transition duration-300 fade-in-section" style="transition-delay: 100ms;">
+                    <div class="w-14 h-14 bg-purple-100 text-purple-600 rounded-xl flex items-center justify-center text-2xl mb-6">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i>
+                    </div>
+                    <h4 class="text-xl font-bold text-gray-900 mb-3">AI 智慧防騙建議</h4>
+                    <p class="text-gray-600 leading-relaxed">
+                        根據詐騙來電通話內容，提供針對性防騙建議。
+                    </p>
+                </div>
+
+        
+            </div>
+        </div>
+    </section>
+
+    <!-- Stats Section -->
+    <section class="bg-brand-900 text-white py-16">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+                <div class="fade-in-section">
+                    <div class="text-4xl md:text-5xl font-bold mb-2 text-brand-200">1+次</div>
+                    <div class="text-brand-100">全球下載</div>
+                </div>
+           
+                <div class="fade-in-section" style="transition-delay: 200ms;">
+                    <div class="text-4xl md:text-5xl font-bold mb-2 text-brand-200">2+種</div>
+                    <div class="text-brand-100">支援語言</div>
+                </div>
+          
+            </div>
+        </div>
+    </section>
+
+    <!-- Screenshots Carousel -->
+    <section id="screenshots" class="py-20 bg-gray-50 overflow-hidden">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16 fade-in-section">
+                <h3 class="text-3xl font-bold text-gray-900">精美介面預覽</h3>
+                <p class="mt-4 text-gray-500">簡約而不簡單，專為高效能人士設計。</p>
+            </div>
+            
+                <!-- Phone Mockup -->
+                <div class="relative flex justify-center fade-in-section" style="transition-delay: 200ms;">
+                    <div class="phone-frame w-[300px] h-[600px] bg-white">
+                        <div class="phone-notch"></div>
+                        <!-- Mockup Screen Content -->
+                        <div class="w-full h-full bg-white overflow-hidden relative">
+                            <!-- Header inside phone -->
+                            <div class="bg-brand-600 h-32 p-6 pt-12 text-white">
+                                <div class="flex justify-between items-center mb-4">
+                                    <i class="fa-solid fa-bars"></i>
+                                    <span class="font-bold">今日概覽</span>
+                                    <i class="fa-regular fa-bell"></i>
+                                </div>
+                                <h3 class="text-2xl font-bold">早安, Alex! ☀️</h3>
+                            </div>
+                            <!-- List inside phone -->
+                            <div class="p-4 space-y-3 -mt-6">
+                                <div class="bg-white p-4 rounded-xl shadow-md flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-600">
+                                        <i class="fa-solid fa-check"></i>
+                                    </div>
+                                    <div>
+                                        <div class="font-bold text-sm">完成晨間會議</div>
+                                        <div class="text-xs text-gray-400">09:00 AM - 10:00 AM</div>
+                                    </div>
+                                </div>
+                                <div class="bg-white p-4 rounded-xl shadow-md flex items-center gap-3 border-l-4 border-brand-500">
+                                    <div class="w-10 h-10 rounded-full bg-brand-100 flex items-center justify-center text-brand-600">
+                                        <i class="fa-solid fa-video"></i>
+                                    </div>
+                                    <div>
+                                        <div class="font-bold text-sm">產品設計研討</div>
+                                        <div class="text-xs text-gray-400">11:30 AM - 12:30 PM</div>
+                                    </div>
+                                </div>
+                                <div class="bg-white p-4 rounded-xl shadow-sm flex items-center gap-3 opacity-75">
+                                    <div class="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center text-orange-600">
+                                        <i class="fa-solid fa-dumbbell"></i>
+                                    </div>
+                                    <div>
+                                        <div class="font-bold text-sm">健身房運動</div>
+                                        <div class="text-xs text-gray-400">06:00 PM</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Chart placeholder -->
+                            <div class="px-4 mt-2">
+                                <div class="bg-gray-50 rounded-xl p-4 h-32 flex items-end justify-between px-6 pb-2">
+                                    <div class="w-2 bg-brand-200 h-10 rounded-t"></div>
+                                    <div class="w-2 bg-brand-300 h-16 rounded-t"></div>
+                                    <div class="w-2 bg-brand-500 h-24 rounded-t"></div>
+                                    <div class="w-2 bg-brand-400 h-14 rounded-t"></div>
+                                    <div class="w-2 bg-brand-200 h-8 rounded-t"></div>
+                                </div>
+                                <div class="text-center text-xs text-gray-400 mt-2">本週專注力分析</div>
+                            </div>
+                            
+                            <!-- Bottom Nav -->
+                            <div class="absolute bottom-0 w-full bg-white border-t p-4 flex justify-around text-gray-400">
+                                <i class="fa-solid fa-house text-brand-600"></i>
+                                <i class="fa-solid fa-calendar"></i>
+                                <div class="w-10 h-10 bg-brand-600 rounded-full -mt-8 flex items-center justify-center text-white shadow-lg">
+                                    <i class="fa-solid fa-plus"></i>
+                                </div>
+                                <i class="fa-solid fa-chart-pie"></i>
+                                <i class="fa-solid fa-user"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+        </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section id="reviews" class="py-20 bg-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h3 class="text-3xl font-bold text-center text-gray-900 mb-16 fade-in-section">使用者評價</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <!-- Review 1 -->
+                <div class="bg-gray-50 p-8 rounded-2xl shadow-sm fade-in-section">
+                    <div class="flex text-yellow-400 mb-4">
+                        <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i>
+                    </div>
+                    <p class="text-gray-700 italic mb-6">給爸媽手機安裝了 ZeroSCAM 之後，我再也不怕爸媽接到詐騙電話了！</p>
+                    <div class="flex items-center">
+                        <div class="w-10 h-10 bg-gray-300 rounded-full overflow-hidden mr-3">
+                            <img src="https://placehold.co/100x100?text=DD" alt="User">
+                        </div>
+                        <div>
+                            <div class="font-bold text-gray-900">王噹噹（化名）</div>
+                            <div class="text-sm text-gray-500">設計師</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Review 2 -->
+                <div class="bg-gray-50 p-8 rounded-2xl shadow-sm fade-in-section" style="transition-delay: 100ms;">
+                    <div class="flex text-yellow-400 mb-4">
+                        <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i>
+                    </div>
+                    <p class="text-gray-700 italic mb-6">介面設計非常精美，每天打開它都是一種享受。</p>
+                    <div class="flex items-center">
+                        <div class="w-10 h-10 bg-gray-300 rounded-full overflow-hidden mr-3">
+                            <img src="https://placehold.co/100x100?text=LC" alt="User">
+                        </div>
+                        <div>
+                            <div class="font-bold text-gray-900">小林（化名）</div>
+                            <div class="text-sm text-gray-500">化妝師</div>
+                        </div>
+                    </div>
+                </div>
+
+             
+            </div>
+        </div>
+    </section>
+
+    <!-- FAQ Section -->
+    <section id="faq" class="py-20 bg-gray-50">
+        <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h3 class="text-3xl font-bold text-center text-gray-900 mb-12 fade-in-section">常見問題</h3>
+            
+            <div class="space-y-4 fade-in-section">
+                <!-- FAQ Item 1 -->
+                <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+                    <button class="w-full px-6 py-4 text-left flex justify-between items-center focus:outline-none" onclick="toggleFaq(this)">
+                        <span class="font-semibold text-gray-900">這款 App 是免費的嗎？</span>
+                        <i class="fa-solid fa-chevron-down text-gray-400 transition-transform duration-300"></i>
+                    </button>
+                    <div class="px-6 pb-4 hidden text-gray-600">
+                        是的，ZeroSCAM 基礎版提供永久免費使用。基礎版包括電話內容AI識別詐騙風險功能。
+                    </div>
+                </div>
+
+                 <!-- FAQ Item 1 -->
+                <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+                    <button class="w-full px-6 py-4 text-left flex justify-between items-center focus:outline-none" onclick="toggleFaq(this)">
+                        <span class="font-semibold text-gray-900">你們會取得我的通話內容嗎？</span>
+                        <i class="fa-solid fa-chevron-down text-gray-400 transition-transform duration-300"></i>
+                    </button>
+                    <div class="px-6 pb-4 hidden text-gray-600">
+                        未經您的同意前，您的通話內容將只在您的手機上進行處理，不會傳輸到任何第三方。唯當您啟用聯網服務後，通話內容會上傳至我們的伺服器進行分析。
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Bottom CTA -->
+    <section class="py-20 bg-brand-600 relative overflow-hidden">
+        <div class="absolute inset-0 bg-brand-700 opacity-50 pattern-dots"></div>
+        <div class="max-w-4xl mx-auto px-4 text-center relative z-10 fade-in-section">
+            <h2 class="text-3xl md:text-5xl font-bold text-white mb-6">準備好掌控所有來電了嗎？</h2>
+            <p class="text-brand-100 text-xl mb-10">立即下載ZeroSCAM，體驗前所未有的安全保障。</p>
+ 
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-gray-900 text-white pt-16 pb-8">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-12 mb-12">
+                <div class="col-span-1 md:col-span-1">
+                    <div class="flex items-center gap-2 mb-4">
+                        <div class="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center text-white text-sm">
+                            <i class="fa-solid fa-bolt"></i>
+                        </div>
+                        <span class="font-bold text-xl">ZeroSCAM</span>
+                    </div>
+                    <p class="text-gray-400 text-sm leading-relaxed">
+                        科技致力提升財產安全
+                    </p>
+                </div>
+         
+                </div>
+            </div>
+            <div class="border-t border-gray-800 pt-8 flex flex-col md:flex-row justify-between items-center">
+              <center>  <p class="text-gray-500 text-sm">
+								國立高雄大學
+
+				ZeroSCAM 團隊
+<br>	A1115543 何翰俊・A1115520 曾仕喬<br>A1115532 朱俊傑・A1115533 郭俊逸			<br>© All rights reserved</p></center>
+                <div class="flex space-x-6 mt-4 md:mt-0 text-gray-500 text-sm" style="display:none;">
+                    <a href="#" class="hover:text-white transition">隱私權政策</a>
+                    <a href="#" class="hover:text-white transition">服務條款</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript Interactions -->
+    <script>
+        // Mobile Menu Toggle
+        const btn = document.getElementById('mobile-menu-btn');
+        const menu = document.getElementById('mobile-menu');
+
+        btn.addEventListener('click', () => {
+            menu.classList.toggle('hidden');
+        });
+
+        // Close mobile menu on link click
+        menu.querySelectorAll('a').forEach(link => {
+            link.addEventListener('click', () => {
+                menu.classList.add('hidden');
+            });
+        });
+
+        // FAQ Toggle
+        function toggleFaq(button) {
+            const content = button.nextElementSibling;
+            const icon = button.querySelector('i');
+            
+            if (content.classList.contains('hidden')) {
+                content.classList.remove('hidden');
+                icon.style.transform = 'rotate(180deg)';
+            } else {
+                content.classList.add('hidden');
+                icon.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        // Scroll to Download
+        function scrollToDownload() {
+            const element = document.getElementById('download-area'); // Scroll to Hero buttons
+            if(element) {
+                // Account for fixed header
+                const headerOffset = 80;
+                const elementPosition = element.getBoundingClientRect().top;
+                const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
+              
+                window.scrollTo({
+                     top: offsetPosition,
+                     behavior: "smooth"
+                });
+            }
+        }
+
+        // Intersection Observer for Fade-in Animations
+        const observerOptions = {
+            root: null,
+            rootMargin: '0px',
+            threshold: 0.1
+        };
+
+        const observer = new IntersectionObserver((entries, observer) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('is-visible');
+                    observer.unobserve(entry.target); // Only animate once
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.fade-in-section').forEach(section => {
+            observer.observe(section);
+        });
+
+        // Navbar shadow on scroll
+        window.addEventListener('scroll', () => {
+            const navbar = document.getElementById('navbar');
+            if (window.scrollY > 10) {
+                navbar.classList.add('shadow-md');
+            } else {
+                navbar.classList.remove('shadow-md');
+            }
+        });
+    </script>
+</body>
+</html>
