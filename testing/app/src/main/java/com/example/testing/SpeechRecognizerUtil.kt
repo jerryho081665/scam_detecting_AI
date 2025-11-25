@@ -12,8 +12,8 @@ import java.util.UUID
 data class Transcription(
     val id: String = UUID.randomUUID().toString(),
     val text: String,
+    val riskScore: Int? = null // null means "not analyzed yet"
 )
-
 class SpeechRecognizerUtil(context: Context) {
     private val speechRecognizer: SpeechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
     val currentLanguage = mutableStateOf("en-US")
@@ -115,6 +115,12 @@ class SpeechRecognizerUtil(context: Context) {
     fun updateTranscription(id: String, newText: String) {
         transcriptionHistory.value = transcriptionHistory.value.map {
             if (it.id == id) it.copy(text = newText) else it
+        }
+    }
+
+    fun updateRisk(id: String, score: Int) {
+        transcriptionHistory.value = transcriptionHistory.value.map {
+            if (it.id == id) it.copy(riskScore = score) else it
         }
     }
 

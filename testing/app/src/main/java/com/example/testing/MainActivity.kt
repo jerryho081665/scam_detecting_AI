@@ -60,23 +60,39 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
     var riskStatusText by remember { mutableStateOf("Waiting for input...") }
 
     // Function to call Python
-    fun checkScamRisk(textToCheck: String) {
+    // 1. Modified function to accept ID
+    fun checkScamRisk(id: String, textToCheck: String) {
         scope.launch {
             try {
-                riskStatusText = "Analyzing..."
+                // Set status to waiting (optional UI tweak) or just wait for result
                 val request = ScamCheckRequest(message = textToCheck)
                 val response = RetrofitClient.instance.checkMessage(request)
 
-                // Convert 0.95 to 95
-                riskPercentage = (response.scam_probability * 100).toInt()
+                val score = (response.scam_probability * 100).toInt()
 
+                // 2. Update the specific item in the list
+                speechRecognizer.updateRisk(id, score)
+
+                // 3. Update the global meter (optional, keeps the bottom bar working)
+                riskPercentage = score
                 riskStatusText = if(response.is_risk) "HIGH RISK DETECTED" else "Safe"
 
-                Log.d("ScamCheck", "Risk: $riskPercentage%")
             } catch (e: Exception) {
                 Log.e("ScamCheck", "Error: ${e.message}")
-                riskStatusText = "Connection Error"
-                // If error, maybe set risk to 0 or keep previous
+            }
+        }
+    }
+
+    // 4. Trigger whenever a NEW item is added
+    LaunchedEffect(speechRecognizer.transcriptionHistory.value.size) {
+        val history = speechRecognizer.transcriptionHistory.value
+        if (history.isNotEmpty()) {
+            // Get the newest item
+            val latestItem = history.first()
+
+            // Only check if it hasn't been checked yet (riskScore is null)
+            if (latestItem.riskScore == null && latestItem.text.isNotBlank()) {
+                checkScamRisk(latestItem.id, latestItem.text)
             }
         }
     }
@@ -84,18 +100,6 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
     DisposableEffect(Unit) {
         onDispose { speechRecognizer.destroy() }
     }
-
-    // TRIGGER: Whenever a new item is added to history (a sentence is finished)
-    // We check the most recent one (index 0)
-    LaunchedEffect(speechRecognizer.transcriptionHistory.value) {
-        val history = speechRecognizer.transcriptionHistory.value
-        if (history.isNotEmpty()) {
-            // Get the newest sentence
-            val latestSentence = history.first().text
-            checkScamRisk(latestSentence)
-        }
-    }
-
     val languageButtonText = when (speechRecognizer.currentLanguage.value) {
         "zh-TW" -> "中文"
         else -> "EN"
@@ -248,11 +252,19 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                     .fillMaxWidth()
                     .weight(1f)
             ) {
-                items(speechRecognizer.transcriptionHistory.value) { transcription ->
+                // FIX 2: Add the 'key'. This prevents items from swapping data when the list updates.
+                items(
+                    items = speechRecognizer.transcriptionHistory.value,
+                    key = { it.id }
+                ) { transcription ->
                     TranscriptionItem(
                         transcription = transcription,
                         onUpdate = { newText ->
+                            // 1. Update the local list
                             speechRecognizer.updateTranscription(transcription.id, newText)
+
+                            // 2. FIX 3: Trigger the Python Check immediately!
+                            checkScamRisk(transcription.id, newText)
                         },
                         onDelete = {
                             speechRecognizer.deleteTranscription(transcription.id)
@@ -341,94 +353,102 @@ fun TranscriptionItem(
     onDelete: () -> Unit
 ) {
     var isEditing by remember { mutableStateOf(false) }
-    var editedText by remember { mutableStateOf(transcription.text) }
+
+    // FIX 1: Use 'remember(transcription.id)'
+    // This forces the text to reset if the row is recycled for a different message
+    var editedText by remember(transcription.id) { mutableStateOf(transcription.text) }
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         )
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+
+            // Risk Badge
+            if (transcription.riskScore != null) {
+                val score = transcription.riskScore
+                val isHighRisk = score >= 50
+                val color = if (isHighRisk) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
+                val text = if (isHighRisk) "⚠️ High Risk ($score%)" else "✅ Safe ($score%)"
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(color.copy(alpha = 0.2f))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(text = text, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = color)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             if (isEditing) {
                 OutlinedTextField(
                     value = editedText,
                     onValueChange = { editedText = it },
                     modifier = Modifier.fillMaxWidth(),
-                    textStyle = MaterialTheme.typography.bodyLarge,
-                    singleLine = false,
-                    maxLines = 3
+                    textStyle = MaterialTheme.typography.bodyLarge
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     Button(
+                        // Save Button
                         onClick = {
-                            onUpdate(editedText)
+                            onUpdate(editedText) // Send the new text back
                             isEditing = false
                         },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer
-                        )
-                    ) {
-                        Text("Save", color = Color.White)
-                    }
+                        modifier = Modifier.height(36.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp)
+                    ) { Text("Save") }
 
-                    Spacer(modifier = Modifier.size(8.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
 
                     Button(
+                        // Cancel Button
                         onClick = {
-                            editedText = transcription.text
+                            editedText = transcription.text // Reset to original
                             isEditing = false
                         },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                        )
-                    ) {
-                        Text("Cancel", color = Color.White)
-                    }
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
+                        modifier = Modifier.height(36.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp)
+                    ) { Text("Cancel") }
                 }
             } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                     Text(
                         text = transcription.text,
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier
                             .weight(1f)
-                            .clickable { isEditing = true }
+                            .clickable {
+                                // Optional: Initialize text when clicking to edit
+                                editedText = transcription.text
+                                isEditing = true
+                            }
                             .padding(end = 8.dp)
                     )
-
                     Column {
                         Icon(
                             painter = painterResource(id = android.R.drawable.ic_menu_edit),
                             contentDescription = "Edit",
-                            modifier = Modifier
-                                .size(24.dp)
-                                .clickable { isEditing = true }
-                                .padding(bottom = 8.dp),
+                            modifier = Modifier.size(20.dp).clickable {
+                                editedText = transcription.text
+                                isEditing = true
+                            },
                             tint = MaterialTheme.colorScheme.primary
                         )
-
+                        Spacer(modifier = Modifier.height(12.dp))
                         Icon(
                             painter = painterResource(id = android.R.drawable.ic_menu_delete),
                             contentDescription = "Delete",
-                            modifier = Modifier
-                                .size(24.dp)
-                                .clickable { onDelete() },
+                            modifier = Modifier.size(20.dp).clickable { onDelete() },
                             tint = MaterialTheme.colorScheme.error
                         )
                     }
