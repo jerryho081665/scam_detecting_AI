@@ -237,9 +237,17 @@ class SpeechRecognizerUtil(private val context: Context) {
         }
     }
 
+    // Existing updateRisk (Keep this to set the initial score)
     fun updateRisk(id: String, score: Int, advice: String?) {
         transcriptionHistory.value = transcriptionHistory.value.map {
             if (it.id == id) it.copy(riskScore = score, advice = advice) else it
+        }
+    }
+
+    // NEW: Update only the advice (used for the 2nd step)
+    fun updateAdvice(id: String, advice: String) {
+        transcriptionHistory.value = transcriptionHistory.value.map {
+            if (it.id == id) it.copy(advice = advice) else it
         }
     }
 

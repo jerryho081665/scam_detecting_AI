@@ -7,6 +7,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,6 +23,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -44,10 +52,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            // CHANGE THIS LINE:
-            // Force darkTheme to true, ignoring the system setting
             TestingTheme(darkTheme = true) {
-
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     SpeechToTextScreen(modifier = Modifier.padding(innerPadding))
                 }
@@ -67,22 +72,44 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     var manualInputText by remember { mutableStateOf("") }
 
-    // State for Server Settings Dialog
-    var showServerDialog by remember { mutableStateOf(false) }
+    // --- SETTINGS STATE ---
+    var showSettingsDialog by remember { mutableStateOf(false) }
+    var showManualInput by remember { mutableStateOf(true) }
+
+    // --- LOGIC: Calculate Highest Risk Item ---
+    val highestRiskItem by remember {
+        derivedStateOf {
+            speechRecognizer.transcriptionHistory.value
+                .filter { it.riskScore != null }
+                .maxByOrNull { it.riskScore!! }
+        }
+    }
+
+    val maxRiskScore = highestRiskItem?.riskScore ?: 0
+    // We specifically extract the advice for the highest risk item to show when collapsed
+    val maxRiskAdvice = highestRiskItem?.advice
 
     fun checkScamRisk(id: String, textToCheck: String) {
         scope.launch {
             try {
-                // RetrofitClient.instance will now use whatever URL is currently configured
+                // STEP 1: FAST Request
                 val request = ScamCheckRequest(message = textToCheck)
                 val response = RetrofitClient.instance.checkMessage(request)
 
                 val score = (response.scam_probability * 100).toInt()
-                speechRecognizer.updateRisk(id, score, response.advice)
+                speechRecognizer.updateRisk(id, score, null)
 
+                // STEP 2: SLOW Request (Advice)
+                if (score > 70) {
+                    try {
+                        val adviceResponse = RetrofitClient.instance.getAdvice(request)
+                        speechRecognizer.updateAdvice(id, adviceResponse.advice)
+                    } catch (e: Exception) {
+                        Log.e("ScamCheck", "Advice Error: ${e.message}")
+                    }
+                }
             } catch (e: Exception) {
-                Log.e("ScamCheck", "Error: ${e.message}")
-                // Optional: Show error in UI
+                Log.e("ScamCheck", "Prediction Error: ${e.message}")
             }
         }
     }
@@ -106,13 +133,14 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
         else -> "EN"
     }
 
-    // --- SERVER SELECTION DIALOG ---
-    if (showServerDialog) {
-        ServerSelectionDialog(
-            onDismiss = { showServerDialog = false },
-            onUrlSelected = { newUrl ->
+    if (showSettingsDialog) {
+        SettingsDialog(
+            initialShowManualInput = showManualInput,
+            onDismiss = { showSettingsDialog = false },
+            onConfirm = { newUrl, newShowManualInput ->
                 RetrofitClient.updateUrl(newUrl)
-                showServerDialog = false
+                showManualInput = newShowManualInput
+                showSettingsDialog = false
             }
         )
     }
@@ -130,19 +158,17 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                 .background(MaterialTheme.colorScheme.surfaceContainer)
                 .padding(16.dp)
         ) {
-            // SETTINGS BUTTON (Top Left)
             IconButton(
-                onClick = { showServerDialog = true },
+                onClick = { showSettingsDialog = true },
                 modifier = Modifier.align(Alignment.TopStart)
             ) {
                 Icon(
                     imageVector = Icons.Default.Settings,
-                    contentDescription = "Server Settings",
+                    contentDescription = "Settings",
                     tint = MaterialTheme.colorScheme.primary
                 )
             }
 
-            // LANGUAGE BUTTON (Top Right)
             Button(
                 onClick = { speechRecognizer.toggleLanguage() },
                 modifier = Modifier.align(Alignment.TopEnd),
@@ -159,7 +185,6 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                     text = "即時語音轉錄",
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.primary,
-                    // Center the title since we have buttons on both sides now
                     textAlign = TextAlign.Center
                 )
 
@@ -194,11 +219,8 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
 
                         if (recognized.isEmpty() && partial.isEmpty()) {
                             Text(
-                                // CHECK: If recording, say "Listening", else say "Click to start"
                                 text = if (speechRecognizer.isRecording.value) "聆聽中..." else "點擊錄音按鈕開始說話...",
-
                                 fontSize = 16.sp,
-                                // OPTIONAL: Change color to indicate activity
                                 color = if (speechRecognizer.isRecording.value) MaterialTheme.colorScheme.primary else Color.Gray,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.fillMaxWidth()
@@ -248,46 +270,53 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
         // --- 2. MANUAL INPUT AREA ---
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+        AnimatedVisibility(
+            visible = showManualInput,
+            enter = expandVertically(),
+            exit = shrinkVertically()
         ) {
-            OutlinedTextField(
-                value = manualInputText,
-                onValueChange = { manualInputText = it },
-                label = { Text("手動輸入文字") },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(
-                    onSend = {
-                        if (manualInputText.isNotBlank()) {
-                            speechRecognizer.addManualTranscription(manualInputText)
-                            manualInputText = ""
-                            keyboardController?.hide()
-                        }
+            Column {
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = manualInputText,
+                        onValueChange = { manualInputText = it },
+                        label = { Text("手動輸入文字") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(
+                            onSend = {
+                                if (manualInputText.isNotBlank()) {
+                                    speechRecognizer.addManualTranscription(manualInputText)
+                                    manualInputText = ""
+                                    keyboardController?.hide()
+                                }
+                            }
+                        )
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            if (manualInputText.isNotBlank()) {
+                                speechRecognizer.addManualTranscription(manualInputText)
+                                manualInputText = ""
+                                keyboardController?.hide()
+                            }
+                        },
+                        modifier = Modifier.height(56.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = android.R.drawable.ic_menu_send),
+                            contentDescription = "Send"
+                        )
                     }
-                )
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Button(
-                onClick = {
-                    if (manualInputText.isNotBlank()) {
-                        speechRecognizer.addManualTranscription(manualInputText)
-                        manualInputText = ""
-                        keyboardController?.hide()
-                    }
-                },
-                modifier = Modifier.height(56.dp),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Icon(
-                    painter = painterResource(id = android.R.drawable.ic_menu_send),
-                    contentDescription = "Send"
-                )
+                }
             }
         }
 
@@ -364,20 +393,29 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                 }
             }
         }
+
+        // --- 5. RISK METER (Updated to handle Full History & Collapsed Logic) ---
+        Spacer(modifier = Modifier.height(12.dp))
+        RiskLevelMeter(
+            score = maxRiskScore,
+            highestRiskAdvice = maxRiskAdvice,
+            history = speechRecognizer.transcriptionHistory.value
+        )
     }
 }
 
-// --- NEW COMPONENT: SERVER SELECTION DIALOG ---
+// --- SETTINGS DIALOG (Unchanged) ---
 @Composable
-fun ServerSelectionDialog(
+fun SettingsDialog(
+    initialShowManualInput: Boolean,
     onDismiss: () -> Unit,
-    onUrlSelected: (String) -> Unit
+    onConfirm: (url: String, showManualInput: Boolean) -> Unit
 ) {
     val presets = ServerConfig.PRESETS
     var selectedOption by remember { mutableStateOf(ServerConfig.currentBaseUrl) }
     var customUrl by remember { mutableStateOf("") }
+    var tempShowManualInput by remember { mutableStateOf(initialShowManualInput) }
 
-    // Check if current is a custom URL
     val isCustomInitially = presets.none { it.first == ServerConfig.currentBaseUrl }
     var isCustomSelected by remember { mutableStateOf(isCustomInitially) }
 
@@ -387,27 +425,23 @@ fun ServerSelectionDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("選擇偵測伺服器") },
+        title = { Text("應用程式設定") },
         text = {
-            Column {
-                // Presets
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text("偵測伺服器", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.height(8.dp))
+
                 presets.forEach { (url, label) ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                selectedOption = url
-                                isCustomSelected = false
-                            }
+                            .clickable { selectedOption = url; isCustomSelected = false }
                             .padding(vertical = 4.dp)
                     ) {
                         RadioButton(
                             selected = (selectedOption == url && !isCustomSelected),
-                            onClick = {
-                                selectedOption = url
-                                isCustomSelected = false
-                            }
+                            onClick = { selectedOption = url; isCustomSelected = false }
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
@@ -417,7 +451,6 @@ fun ServerSelectionDialog(
                     }
                 }
 
-                // Custom Option
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -430,7 +463,7 @@ fun ServerSelectionDialog(
                         onClick = { isCustomSelected = true }
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = "手動輸入 (Custom)", style = MaterialTheme.typography.bodyMedium)
+                    Text(text = "手動輸入", style = MaterialTheme.typography.bodyMedium)
                 }
 
                 if (isCustomSelected) {
@@ -438,30 +471,239 @@ fun ServerSelectionDialog(
                         value = customUrl,
                         onValueChange = { customUrl = it },
                         label = { Text("請輸入網址") },
-                        placeholder = { Text("http://...") },
                         modifier = Modifier.fillMaxWidth()
                     )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                Text("顯示設定", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { tempShowManualInput = !tempShowManualInput }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("顯示手動輸入欄位")
+                    Switch(checked = tempShowManualInput, onCheckedChange = { tempShowManualInput = it })
                 }
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    val finalUrl = if (isCustomSelected) customUrl else selectedOption
-                    if (finalUrl.isNotBlank()) {
-                        onUrlSelected(finalUrl)
-                    }
-                }
-            ) {
-                Text("確定")
-            }
+            Button(onClick = {
+                val finalUrl = if (isCustomSelected) customUrl else selectedOption
+                if (finalUrl.isNotBlank()) onConfirm(finalUrl, tempShowManualInput)
+            }) { Text("確定") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
+            TextButton(onClick = onDismiss) { Text("取消") }
         }
     )
+}
+
+// --- UPDATED RISK METER ---
+@Composable
+fun RiskLevelMeter(
+    score: Int,
+    highestRiskAdvice: String?,
+    history: List<Transcription>
+) {
+    val animatedProgress by animateFloatAsState(
+        targetValue = score / 100f,
+        label = "riskProgress"
+    )
+
+    // Expand state
+    var isExpanded by remember { mutableStateOf(false) }
+
+    // Filter history to find ALL items that have advice
+    val allAdviceItems = remember(history) {
+        history.filter { !it.advice.isNullOrEmpty() }
+    }
+
+    // Determine if we should allow clicking (enable if there is ANY advice)
+    val hasAdvice = !highestRiskAdvice.isNullOrEmpty() || allAdviceItems.isNotEmpty()
+
+    // Collapse if data is cleared
+    LaunchedEffect(hasAdvice) {
+        if (!hasAdvice) isExpanded = false
+    }
+
+    val (color, label, iconId) = when {
+        score > 70 -> Triple(MaterialTheme.colorScheme.error, "高度危險 (DANGER)", android.R.drawable.ic_dialog_alert)
+        score > 30 -> Triple(Color(0xFFFFA000), "中度風險 (WARNING)", android.R.drawable.ic_dialog_info)
+        else -> Triple(Color(0xFF4CAF50), "安全 (SAFE)", android.R.drawable.ic_lock_idle_lock)
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = hasAdvice) { isExpanded = !isExpanded },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+        ),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // --- TOP ROW: Score & Label ---
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        painter = painterResource(id = iconId),
+                        contentDescription = null,
+                        tint = color,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "最高偵測風險指數",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Text(
+                    text = "$score%",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = color,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // --- PROGRESS BAR ---
+            LinearProgressIndicator(
+                progress = { animatedProgress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(12.dp)
+                    .clip(RoundedCornerShape(6.dp)),
+                color = color,
+                trackColor = Color.Gray.copy(alpha = 0.2f),
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // --- BOTTOM LABEL / TOGGLE HINT ---
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                if (hasAdvice) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Expand",
+                            tint = color,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = if (isExpanded) "點擊收起" else "點擊查看所有建議",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = color
+                        )
+                    }
+                } else {
+                    Spacer(modifier = Modifier.width(1.dp))
+                }
+
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = color
+                )
+            }
+
+            // --- CONTENT AREA ---
+
+            // 1. COLLAPSED VIEW: Show ONLY the highest risk advice
+            AnimatedVisibility(
+                visible = !isExpanded && !highestRiskAdvice.isNullOrEmpty(),
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = color.copy(alpha = 0.3f))
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "主要警告 (Main Warning):",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = color
+                    )
+                    Text(
+                        text = highestRiskAdvice!!,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            // 2. EXPANDED VIEW: Show ALL advice found in history
+            AnimatedVisibility(
+                visible = isExpanded && allAdviceItems.isNotEmpty(),
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = color.copy(alpha = 0.3f))
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "所有 AI 建議 (All Advice):",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Render list of all advice
+                    allAdviceItems.forEachIndexed { index, item ->
+                        val itemColor = if (item.riskScore != null && item.riskScore > 70)
+                            MaterialTheme.colorScheme.error
+                        else
+                            MaterialTheme.colorScheme.onSurface
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                                    RoundedCornerShape(8.dp)
+                                )
+                                .padding(8.dp)
+                        ) {
+                            // Context (Original Text)
+                            Text(
+                                text = "原文: \"${item.text}\"",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            // Advice
+                            Text(
+                                text = "💡 ${item.advice}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = itemColor
+                            )
+                        }
+
+                        if (index < allAdviceItems.size - 1) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -470,10 +712,6 @@ fun TranscriptionItem(
     onUpdate: (String) -> Unit,
     onDelete: () -> Unit
 ) {
-    // ... (Keep the exact same code for TranscriptionItem as before) ...
-    // Just copy the existing TranscriptionItem code here to complete the file.
-    // For brevity in this response, I assume you will keep the existing logic.
-
     var isEditing by remember { mutableStateOf(false) }
     var editedText by remember(transcription.id) { mutableStateOf(transcription.text) }
 
@@ -487,6 +725,7 @@ fun TranscriptionItem(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
 
+            // --- RISK LABEL (Simplified) ---
             if (transcription.riskScore != null) {
                 val score = transcription.riskScore
                 val (color, text) = when {
@@ -508,37 +747,10 @@ fun TranscriptionItem(
                         color = color
                     )
                 }
-
-                if (!transcription.advice.isNullOrEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
-                                RoundedCornerShape(8.dp)
-                            )
-                            .padding(12.dp)
-                    ) {
-                        Column {
-                            Text(
-                                text = "💡 AI 建議：",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = transcription.advice,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                }
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
+            // --- TEXT CONTENT ---
             if (isEditing) {
                 OutlinedTextField(
                     value = editedText,
