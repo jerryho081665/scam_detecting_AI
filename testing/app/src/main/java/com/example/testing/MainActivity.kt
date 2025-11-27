@@ -90,7 +90,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
             try {
                 // STEP 1: FAST Request
                 val request = ScamCheckRequest(message = textToCheck)
-                val response = RetrofitClient.instance.checkMessage(request)
+                val response = RetrofitClientFast.instance.checkMessage(request)
 
                 val score = (response.scam_probability * 100).toInt()
                 speechRecognizer.updateRisk(id, score, null)
@@ -98,7 +98,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                 // STEP 2: SLOW Request (Advice)
                 if (score > 70) {
                     try {
-                        val adviceResponse = RetrofitClient.instance.getAdvice(request)
+                        val adviceResponse = RetrofitClientSlow.instance.getAdvice(request)
                         speechRecognizer.updateAdvice(id, adviceResponse.advice)
                     } catch (e: Exception) {
                         Log.e("ScamCheck", "Advice Error: ${e.message}")
@@ -134,7 +134,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
             initialShowManualInput = showManualInput,
             onDismiss = { showSettingsDialog = false },
             onConfirm = { newUrl, newShowManualInput ->
-                RetrofitClient.updateUrl(newUrl)
+                RetrofitClientSlow.updateUrl(newUrl)
                 showManualInput = newShowManualInput
                 showSettingsDialog = false
             }

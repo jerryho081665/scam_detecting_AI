@@ -21,14 +21,13 @@ data class AdviceResponse(
 )
 
 // 2. Interface
-interface ApiService {
-    // Fast call (Local BERT)
+interface ApiServiceSlow {
+    @POST("/v1/chat/completions?token=7a4c019c-db87-4e21-b90e-9cfc75057f7e")
+    suspend fun getAdvice(@Body request: ScamCheckRequest): AdviceResponse
+}
+interface ApiServiceFast {
     @POST("/predict?7a4c019c-db87-4e21-b90e-9cfc75057f7e")
     suspend fun checkMessage(@Body request: ScamCheckRequest): ScamCheckResponse
-
-    // Slow call (External LLM) - NEW
-    @POST("/advice?7a4c019c-db87-4e21-b90e-9cfc75057f7e")
-    suspend fun getAdvice(@Body request: ScamCheckRequest): AdviceResponse
 }
 
 // 3. Server Configuration & Presets (Unchanged)
@@ -40,16 +39,12 @@ object ServerConfig {
     )
     var currentBaseUrl: String = PRESETS[0].first
 }
+object RetrofitClientFast {
+    private var apiService: ApiServiceFast? = null
 
-// 4. Dynamic Retrofit Client (Unchanged)
-object RetrofitClient {
-    private var apiService: ApiService? = null
-
-    val instance: ApiService
+    val instance: ApiServiceFast
         get() {
-            if (apiService == null) {
-                rebuild()
-            }
+            if (apiService == null) rebuild()
             return apiService!!
         }
 
@@ -63,11 +58,35 @@ object RetrofitClient {
             .baseUrl(url)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
-            .create(ApiService::class.java)
+            .create(ApiServiceFast::class.java)
     }
+}
+object RetrofitClientSlow {
+    private var apiService: ApiServiceSlow? = null
 
+    val instance: ApiServiceSlow
+        get() {
+            if (apiService == null) rebuild()
+            return apiService!!
+        }
+
+    fun rebuild() {
+        val url = if (ServerConfigAdvice.baseUrl.endsWith("/"))
+            ServerConfigAdvice.baseUrl
+        else
+            "${ServerConfigAdvice.baseUrl}/"
+
+        apiService = Retrofit.Builder()
+            .baseUrl(url)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(ApiServiceSlow::class.java)
+    }
     fun updateUrl(newUrl: String) {
         ServerConfig.currentBaseUrl = newUrl
         apiService = null
     }
+}
+object ServerConfigAdvice {
+    var baseUrl: String = "https://ai-anti-scam.443.gs"
 }
