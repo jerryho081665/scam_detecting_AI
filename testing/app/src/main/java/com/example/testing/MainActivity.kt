@@ -10,8 +10,6 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -23,8 +21,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -86,7 +82,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
     }
 
     val maxRiskScore = highestRiskItem?.riskScore ?: 0
-    // We specifically extract the advice for the highest risk item to show when collapsed
+    // We specifically extract the advice for the highest risk item
     val maxRiskAdvice = highestRiskItem?.advice
 
     fun checkScamRisk(id: String, textToCheck: String) {
@@ -329,7 +325,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "歷史紀錄",
+                text = "對話紀錄",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -394,12 +390,11 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        // --- 5. RISK METER (Updated to handle Full History & Collapsed Logic) ---
+        // --- 5. RISK METER (Static View - No Toggle) ---
         Spacer(modifier = Modifier.height(12.dp))
         RiskLevelMeter(
             score = maxRiskScore,
-            highestRiskAdvice = maxRiskAdvice,
-            history = speechRecognizer.transcriptionHistory.value
+            highestRiskAdvice = maxRiskAdvice
         )
     }
 }
@@ -503,44 +498,26 @@ fun SettingsDialog(
     )
 }
 
-// --- UPDATED RISK METER ---
+// --- UPDATED RISK METER (Removed Toggle) ---
 @Composable
 fun RiskLevelMeter(
     score: Int,
-    highestRiskAdvice: String?,
-    history: List<Transcription>
+    highestRiskAdvice: String?
 ) {
     val animatedProgress by animateFloatAsState(
         targetValue = score / 100f,
         label = "riskProgress"
     )
 
-    // Expand state
-    var isExpanded by remember { mutableStateOf(false) }
-
-    // Filter history to find ALL items that have advice
-    val allAdviceItems = remember(history) {
-        history.filter { !it.advice.isNullOrEmpty() }
-    }
-
-    // Determine if we should allow clicking (enable if there is ANY advice)
-    val hasAdvice = !highestRiskAdvice.isNullOrEmpty() || allAdviceItems.isNotEmpty()
-
-    // Collapse if data is cleared
-    LaunchedEffect(hasAdvice) {
-        if (!hasAdvice) isExpanded = false
-    }
-
+    // CHANGED: "Safe" is now anything < 50
     val (color, label, iconId) = when {
         score > 70 -> Triple(MaterialTheme.colorScheme.error, "高度危險 (DANGER)", android.R.drawable.ic_dialog_alert)
-        score > 30 -> Triple(Color(0xFFFFA000), "中度風險 (WARNING)", android.R.drawable.ic_dialog_info)
+        score >= 50 -> Triple(Color(0xFFFFA000), "中度風險 (WARNING)", android.R.drawable.ic_dialog_info)
         else -> Triple(Color(0xFF4CAF50), "安全 (SAFE)", android.R.drawable.ic_lock_idle_lock)
     }
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = hasAdvice) { isExpanded = !isExpanded },
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
         ),
@@ -590,26 +567,8 @@ fun RiskLevelMeter(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // --- BOTTOM LABEL / TOGGLE HINT ---
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                if (hasAdvice) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                            contentDescription = "Expand",
-                            tint = color,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = if (isExpanded) "點擊收起" else "點擊查看所有建議",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = color
-                        )
-                    }
-                } else {
-                    Spacer(modifier = Modifier.width(1.dp))
-                }
-
+            // --- BOTTOM LABEL ---
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 Text(
                     text = label,
                     style = MaterialTheme.typography.labelMedium,
@@ -617,14 +576,9 @@ fun RiskLevelMeter(
                 )
             }
 
-            // --- CONTENT AREA ---
-
-            // 1. COLLAPSED VIEW: Show ONLY the highest risk advice
-            AnimatedVisibility(
-                visible = !isExpanded && !highestRiskAdvice.isNullOrEmpty(),
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
-            ) {
+            // --- STATIC ADVICE VIEW ---
+            // If advice exists, show it permanently. No toggles.
+            if (!highestRiskAdvice.isNullOrEmpty()) {
                 Column {
                     Spacer(modifier = Modifier.height(12.dp))
                     HorizontalDivider(color = color.copy(alpha = 0.3f))
@@ -637,69 +591,10 @@ fun RiskLevelMeter(
                         color = color
                     )
                     Text(
-                        text = highestRiskAdvice!!,
+                        text = highestRiskAdvice,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                }
-            }
-
-            // 2. EXPANDED VIEW: Show ALL advice found in history
-            AnimatedVisibility(
-                visible = isExpanded && allAdviceItems.isNotEmpty(),
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
-            ) {
-                Column {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider(color = color.copy(alpha = 0.3f))
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = "所有 AI 建議 (All Advice):",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Render list of all advice
-                    allAdviceItems.forEachIndexed { index, item ->
-                        val itemColor = if (item.riskScore != null && item.riskScore > 70)
-                            MaterialTheme.colorScheme.error
-                        else
-                            MaterialTheme.colorScheme.onSurface
-
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(
-                                    MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                                    RoundedCornerShape(8.dp)
-                                )
-                                .padding(8.dp)
-                        ) {
-                            // Context (Original Text)
-                            Text(
-                                text = "原文: \"${item.text}\"",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            // Advice
-                            Text(
-                                text = "💡 ${item.advice}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = itemColor
-                            )
-                        }
-
-                        if (index < allAdviceItems.size - 1) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                        }
-                    }
                 }
             }
         }
@@ -728,9 +623,10 @@ fun TranscriptionItem(
             // --- RISK LABEL (Simplified) ---
             if (transcription.riskScore != null) {
                 val score = transcription.riskScore
+                // CHANGED: "Safe" is now anything < 50
                 val (color, text) = when {
                     score > 70 -> MaterialTheme.colorScheme.error to "⚠️ 高風險 ($score%)"
-                    score < 30 -> Color(0xFF4CAF50) to "✅ 安全 ($score%)"
+                    score < 50 -> Color(0xFF4CAF50) to "✅ 安全 ($score%)"
                     else -> Color(0xFFFFFFA0) to "⚠️ 需留意 ($score%)"
                 }
 
