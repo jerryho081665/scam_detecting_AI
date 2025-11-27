@@ -14,7 +14,8 @@ data class ScamCheckRequest(
 data class ScamCheckResponse(
     val text_received: String,
     val scam_probability: Double,
-    val is_risk: Boolean
+    val is_risk: Boolean,
+    val advice: String? = null  // <--- Add this line!
 )
 
 // 3. Define the Interface

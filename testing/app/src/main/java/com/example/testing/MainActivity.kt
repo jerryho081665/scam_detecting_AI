@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,6 +14,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,8 +23,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,31 +56,23 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val recordAudioPermission = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
     val speechRecognizer = remember { SpeechRecognizerUtil(context) }
+    val keyboardController = LocalSoftwareKeyboardController.current
 
-    // Scope for running background network tasks
     val scope = rememberCoroutineScope()
+    var manualInputText by remember { mutableStateOf("") }
 
-    // State for Scam Risk (0 to 100)
-    var riskPercentage by remember { mutableIntStateOf(0) }
-    var riskStatusText by remember { mutableStateOf("Waiting for input...") }
+    // Removed global risk state variables (riskPercentage, etc.) as requested
 
-    // Function to call Python
-    // 1. Modified function to accept ID
     fun checkScamRisk(id: String, textToCheck: String) {
         scope.launch {
             try {
-                // Set status to waiting (optional UI tweak) or just wait for result
                 val request = ScamCheckRequest(message = textToCheck)
                 val response = RetrofitClient.instance.checkMessage(request)
 
                 val score = (response.scam_probability * 100).toInt()
 
-                // 2. Update the specific item in the list
-                speechRecognizer.updateRisk(id, score)
-
-                // 3. Update the global meter (optional, keeps the bottom bar working)
-                riskPercentage = score
-                riskStatusText = if(response.is_risk) "HIGH RISK DETECTED" else "Safe"
+                // Pass the advice to the specific item
+                speechRecognizer.updateRisk(id, score, response.advice)
 
             } catch (e: Exception) {
                 Log.e("ScamCheck", "Error: ${e.message}")
@@ -83,14 +80,10 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    // 4. Trigger whenever a NEW item is added
     LaunchedEffect(speechRecognizer.transcriptionHistory.value.size) {
         val history = speechRecognizer.transcriptionHistory.value
         if (history.isNotEmpty()) {
-            // Get the newest item
             val latestItem = history.first()
-
-            // Only check if it hasn't been checked yet (riskScore is null)
             if (latestItem.riskScore == null && latestItem.text.isNotBlank()) {
                 checkScamRisk(latestItem.id, latestItem.text)
             }
@@ -100,6 +93,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
     DisposableEffect(Unit) {
         onDispose { speechRecognizer.destroy() }
     }
+
     val languageButtonText = when (speechRecognizer.currentLanguage.value) {
         "zh-TW" -> "中文"
         else -> "EN"
@@ -110,6 +104,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
             .fillMaxSize()
             .padding(16.dp)
     ) {
+        // --- 1. SPEECH AREA ---
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -130,7 +125,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "Current Transcription",
+                    text = "即時語音轉錄",
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.align(Alignment.Start)
@@ -138,22 +133,45 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Text(
-                    text = speechRecognizer.recognizedText.value,
-                    fontSize = 20.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                // Use Crossfade for smoother transitions
+                Crossfade(
+                    targetState = speechRecognizer.recognizedText.value to speechRecognizer.partialText.value,
+                    label = "speech-text"
+                ) { (recognized, partial) ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (recognized.isNotEmpty()) {
+                            Text(
+                                text = recognized,
+                                fontSize = 20.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
 
-                if (speechRecognizer.isRecording.value && speechRecognizer.partialText.value.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = speechRecognizer.partialText.value,
-                        fontSize = 18.sp,
-                        color = Color.Gray,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                        if (speechRecognizer.isRecording.value && partial.isNotEmpty()) {
+                            if (recognized.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                            Text(
+                                text = partial,
+                                fontSize = 18.sp,
+                                color = Color.Gray,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        // Show placeholder when nothing is being recognized
+                        if (recognized.isEmpty() && partial.isEmpty()) {
+                            Text(
+                                text = "點擊錄音按鈕開始說話...",
+                                fontSize = 16.sp,
+                                color = Color.Gray,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -162,11 +180,11 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                     onClick = {
                         if (recordAudioPermission.status.isGranted) {
                             if (speechRecognizer.isRecording.value) {
-                                speechRecognizer.isRecording.value = false
-                                speechRecognizer.stopListening()
+                                // OPTIMIZATION: Use the dedicated stop method
+                                speechRecognizer.stopRecording()
                             } else {
-                                speechRecognizer.isRecording.value = true
-                                speechRecognizer.startListening()
+                                // OPTIMIZATION: Use the dedicated start method
+                                speechRecognizer.startRecording()
                             }
                         } else {
                             recordAudioPermission.launchPermissionRequest()
@@ -188,7 +206,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                             else
                                 android.R.drawable.ic_btn_speak_now
                         ),
-                        contentDescription = if (speechRecognizer.isRecording.value) "Stop" else "Mic",
+                        contentDescription = if (speechRecognizer.isRecording.value) "停止" else "錄音",
                         modifier = Modifier.size(40.dp),
                         tint = if (speechRecognizer.isRecording.value)
                             MaterialTheme.colorScheme.error
@@ -199,15 +217,59 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
+        // --- 2. MANUAL INPUT AREA ---
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = manualInputText,
+                onValueChange = { manualInputText = it },
+                label = { Text("手動輸入文字") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(
+                    onSend = {
+                        if (manualInputText.isNotBlank()) {
+                            speechRecognizer.addManualTranscription(manualInputText)
+                            manualInputText = ""
+                            keyboardController?.hide()
+                        }
+                    }
+                )
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Button(
+                onClick = {
+                    if (manualInputText.isNotBlank()) {
+                        speechRecognizer.addManualTranscription(manualInputText)
+                        manualInputText = ""
+                        keyboardController?.hide()
+                    }
+                },
+                modifier = Modifier.height(56.dp),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Icon(
+                    painter = painterResource(id = android.R.drawable.ic_menu_send),
+                    contentDescription = "Send"
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // --- 3. HISTORY HEADER ---
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "History",
+                text = "歷史紀錄",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -223,17 +285,18 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                 ) {
                     Icon(
                         painter = painterResource(id = android.R.drawable.ic_menu_close_clear_cancel),
-                        contentDescription = "Clear history",
+                        contentDescription = "清除紀錄",
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
-                    Text(text = "Clear", color = Color.White)
+                    Text(text = "清除", color = Color.White)
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
+        // --- 4. HISTORY LIST ---
         if (speechRecognizer.transcriptionHistory.value.isEmpty()) {
             Box(
                 modifier = Modifier
@@ -242,7 +305,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "No transcriptions yet",
+                    text = "尚無紀錄",
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
             }
@@ -252,7 +315,6 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                     .fillMaxWidth()
                     .weight(1f)
             ) {
-                // FIX 2: Add the 'key'. This prevents items from swapping data when the list updates.
                 items(
                     items = speechRecognizer.transcriptionHistory.value,
                     key = { it.id }
@@ -260,10 +322,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                     TranscriptionItem(
                         transcription = transcription,
                         onUpdate = { newText ->
-                            // 1. Update the local list
                             speechRecognizer.updateTranscription(transcription.id, newText)
-
-                            // 2. FIX 3: Trigger the Python Check immediately!
                             checkScamRisk(transcription.id, newText)
                         },
                         onDelete = {
@@ -274,75 +333,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                 }
             }
         }
-
-        // Meter Bar at the bottom (Now displays RISK)
-        Spacer(modifier = Modifier.height(16.dp))
-        MeterBar(percentage = riskPercentage, statusText = riskStatusText)
-    }
-}
-
-@Composable
-fun MeterBar(percentage: Int, statusText: String) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Scam Risk Level",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-
-                Text(
-                    text = "$percentage%",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = if(percentage > 50) Color.Red else MaterialTheme.colorScheme.primary
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Progress bar
-            LinearProgressIndicator(
-                progress = percentage / 100f,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(12.dp)
-                    .clip(RoundedCornerShape(6.dp)),
-                color = when {
-                    percentage < 30 -> Color.Green   // Safe
-                    percentage < 70 -> Color.Yellow  // Caution
-                    else -> Color.Red                // DANGER
-                },
-                trackColor = MaterialTheme.colorScheme.surfaceContainerLow
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Status Text
-            Text(
-                text = statusText,
-                style = MaterialTheme.typography.labelMedium,
-                color = if (percentage >= 50) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
-        }
+        // Removed the MeterBar call that was here
     }
 }
 
@@ -353,9 +344,6 @@ fun TranscriptionItem(
     onDelete: () -> Unit
 ) {
     var isEditing by remember { mutableStateOf(false) }
-
-    // FIX 1: Use 'remember(transcription.id)'
-    // This forces the text to reset if the row is recycled for a different message
     var editedText by remember(transcription.id) { mutableStateOf(transcription.text) }
 
     Card(
@@ -368,12 +356,14 @@ fun TranscriptionItem(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
 
-            // Risk Badge
+            // --- RISK BADGE AND ADVICE ---
             if (transcription.riskScore != null) {
                 val score = transcription.riskScore
-                val isHighRisk = score >= 50
-                val color = if (isHighRisk) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
-                val text = if (isHighRisk) "⚠️ High Risk ($score%)" else "✅ Safe ($score%)"
+                val (color, text) = when {
+                    score > 70 -> MaterialTheme.colorScheme.error to "⚠️ 高風險 ($score%)"
+                    score < 30 -> Color(0xFF4CAF50) to "✅ 安全 ($score%)"
+                    else -> Color(0xFFFFFFA0) to "⚠️ 需留意 ($score%)"
+                }
 
                 Box(
                     modifier = Modifier
@@ -381,11 +371,46 @@ fun TranscriptionItem(
                         .background(color.copy(alpha = 0.2f))
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
-                    Text(text = text, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = color)
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = color
+                    )
+                }
+
+                // AI ADVICE DISPLAY (Newly added inside the card)
+                if (!transcription.advice.isNullOrEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(12.dp)
+                    ) {
+                        Column {
+                            Text(
+                                text = "💡 AI 建議：",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = transcription.advice,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
+            // --- EDITING / TEXT DISPLAY ---
             if (isEditing) {
                 OutlinedTextField(
                     value = editedText,
@@ -398,27 +423,29 @@ fun TranscriptionItem(
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     Button(
-                        // Save Button
                         onClick = {
-                            onUpdate(editedText) // Send the new text back
+                            onUpdate(editedText)
                             isEditing = false
                         },
                         modifier = Modifier.height(36.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp)
-                    ) { Text("Save") }
+                    ) {
+                        Text("儲存")
+                    }
 
                     Spacer(modifier = Modifier.width(8.dp))
 
                     Button(
-                        // Cancel Button
                         onClick = {
-                            editedText = transcription.text // Reset to original
+                            editedText = transcription.text
                             isEditing = false
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
                         modifier = Modifier.height(36.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp)
-                    ) { Text("Cancel") }
+                    ) {
+                        Text("取消")
+                    }
                 }
             } else {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
@@ -428,7 +455,6 @@ fun TranscriptionItem(
                         modifier = Modifier
                             .weight(1f)
                             .clickable {
-                                // Optional: Initialize text when clicking to edit
                                 editedText = transcription.text
                                 isEditing = true
                             }
@@ -437,7 +463,7 @@ fun TranscriptionItem(
                     Column {
                         Icon(
                             painter = painterResource(id = android.R.drawable.ic_menu_edit),
-                            contentDescription = "Edit",
+                            contentDescription = "編輯",
                             modifier = Modifier.size(20.dp).clickable {
                                 editedText = transcription.text
                                 isEditing = true
@@ -447,7 +473,7 @@ fun TranscriptionItem(
                         Spacer(modifier = Modifier.height(12.dp))
                         Icon(
                             painter = painterResource(id = android.R.drawable.ic_menu_delete),
-                            contentDescription = "Delete",
+                            contentDescription = "刪除",
                             modifier = Modifier.size(20.dp).clickable { onDelete() },
                             tint = MaterialTheme.colorScheme.error
                         )
