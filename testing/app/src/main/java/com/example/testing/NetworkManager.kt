@@ -17,15 +17,39 @@ data class ScamCheckResponse(
 
 // NEW: Response model for the secondary advice call
 data class AdviceResponse(
-    val advice: String
+    val choices: List<Choice>
+)
+
+data class Choice(
+    val message: MessageContent
+)
+
+data class MessageContent(
+    val role: String,
+    val content: String
+)
+
+
+// === NEW: OpenAI 格式 ===
+data class OpenAIRequest(
+    val model: String = "qwen/qwen3-30b-a3b-2507",
+    val messages: List<Message>
+)
+
+data class Message(
+    val role: String,
+    val content: String
 )
 
 // 2. Interface
 interface ApiServiceSlow {
+
     @POST("/v1/chat/completions?token=7a4c019c-db87-4e21-b90e-9cfc75057f7e")
-    suspend fun getAdvice(@Body request: ScamCheckRequest): AdviceResponse
+    suspend fun getAdvice(@Body request: OpenAIRequest): AdviceResponse
 }
+
 interface ApiServiceFast {
+
     @POST("/predict?7a4c019c-db87-4e21-b90e-9cfc75057f7e")
     suspend fun checkMessage(@Body request: ScamCheckRequest): ScamCheckResponse
 }
@@ -39,6 +63,7 @@ object ServerConfig {
     )
     var currentBaseUrl: String = PRESETS[0].first
 }
+
 object RetrofitClientFast {
     private var apiService: ApiServiceFast? = null
 
@@ -51,8 +76,7 @@ object RetrofitClientFast {
     fun rebuild() {
         val url = if (ServerConfig.currentBaseUrl.endsWith("/"))
             ServerConfig.currentBaseUrl
-        else
-            "${ServerConfig.currentBaseUrl}/"
+        else "${ServerConfig.currentBaseUrl}/"
 
         apiService = Retrofit.Builder()
             .baseUrl(url)
@@ -61,6 +85,11 @@ object RetrofitClientFast {
             .create(ApiServiceFast::class.java)
     }
 }
+
+object ServerConfigAdvice {
+    var baseUrl: String = "https://ai-anti-scam.443.gs"
+}
+
 object RetrofitClientSlow {
     private var apiService: ApiServiceSlow? = null
 
@@ -69,12 +98,21 @@ object RetrofitClientSlow {
             if (apiService == null) rebuild()
             return apiService!!
         }
+    fun convert(request: ScamCheckRequest): OpenAIRequest {
+        return OpenAIRequest(
+            messages = listOf(
+                Message(
+                    role = "user",
+                    content = request.message
+                )
+            )
+        )
+    }
 
     fun rebuild() {
         val url = if (ServerConfigAdvice.baseUrl.endsWith("/"))
             ServerConfigAdvice.baseUrl
-        else
-            "${ServerConfigAdvice.baseUrl}/"
+        else "${ServerConfigAdvice.baseUrl}/"
 
         apiService = Retrofit.Builder()
             .baseUrl(url)
@@ -82,11 +120,9 @@ object RetrofitClientSlow {
             .build()
             .create(ApiServiceSlow::class.java)
     }
+
     fun updateUrl(newUrl: String) {
         ServerConfig.currentBaseUrl = newUrl
         apiService = null
     }
-}
-object ServerConfigAdvice {
-    var baseUrl: String = "https://ai-anti-scam.443.gs"
 }

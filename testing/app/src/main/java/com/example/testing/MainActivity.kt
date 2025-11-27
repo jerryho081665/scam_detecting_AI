@@ -98,8 +98,13 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                 // STEP 2: SLOW Request (Advice)
                 if (score > 70) {
                     try {
-                        val adviceResponse = RetrofitClientSlow.instance.getAdvice(request)
-                        speechRecognizer.updateAdvice(id, adviceResponse.advice)
+                        val adviceResponse = RetrofitClientSlow.instance.getAdvice(
+                            RetrofitClientSlow.convert(request)
+                        )
+
+                        speechRecognizer.updateAdvice(id, adviceResponse.choices[0].message.content)
+
+
                     } catch (e: Exception) {
                         Log.e("ScamCheck", "Advice Error: ${e.message}")
                     }
