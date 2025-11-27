@@ -46,7 +46,7 @@ class SpeechRecognizerUtil(private val context: Context) {
         }
 
         override fun onBeginningOfSpeech() {
-            partialText.value = "聆聽中..."
+            partialText.value = ""
         }
 
         override fun onRmsChanged(rmsdB: Float) {}
@@ -101,14 +101,16 @@ class SpeechRecognizerUtil(private val context: Context) {
 
                     // Only update if we got meaningful text (not empty or very short)
                     if (finalText.isNotBlank() && finalText.length > 1) {
-                        recognizedText.value = finalText
-                        partialText.value = ""
 
-                        if (finalText.isNotBlank()) {
-                            val newHistory = transcriptionHistory.value.toMutableList()
-                            newHistory.add(0, Transcription(text = finalText))
-                            transcriptionHistory.value = newHistory
-                        }
+                        // 1. Add to History immediately
+                        val newHistory = transcriptionHistory.value.toMutableList()
+                        newHistory.add(0, Transcription(text = finalText))
+                        transcriptionHistory.value = newHistory
+
+                        // 2. CLEAR the "Live" text immediately
+                        // This ensures the main box empties out after recording is done
+                        recognizedText.value = ""
+                        partialText.value = ""
                     }
                 }
             }

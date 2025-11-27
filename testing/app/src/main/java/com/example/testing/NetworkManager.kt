@@ -5,35 +5,65 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.POST
 
-// 1. What we SEND to Python
-data class ScamCheckRequest(
-    val message: String
-)
+// 1. Request/Response Models
+data class ScamCheckRequest(val message: String)
 
-// 2. What we RECEIVE from Python
 data class ScamCheckResponse(
     val text_received: String,
     val scam_probability: Double,
     val is_risk: Boolean,
-    val advice: String? = null  // <--- Add this line!
+    val advice: String? = null
 )
 
-// 3. Define the Interface
+// 2. Interface
 interface ApiService {
     @POST("/predict?7a4c019c-db87-4e21-b90e-9cfc75057f7e")
     suspend fun checkMessage(@Body request: ScamCheckRequest): ScamCheckResponse
 }
 
-// 4. Create the Retrofit Instance
-object RetrofitClient {
-    // ⚠️ IMPORTANT: Double check this IP address matches your computer's IP!
-    private const val BASE_URL = "https://detect.443.gs/"
+// 3. Server Configuration & Presets
+object ServerConfig {
+    // Define your 3 Presets here
+    val PRESETS = listOf(
+        "https://detect.443.gs/" to "(Default)",
+        "http2://detect2.443.gs/" to "(backup)",
+        "http://192.168.0.169:5000/" to "(Localhost)"
+    )
 
-    val instance: ApiService by lazy {
-        Retrofit.Builder()
-            .baseUrl(BASE_URL)
+    // Current URL (Starts with the first preset)
+    var currentBaseUrl: String = PRESETS[0].first
+}
+
+// 4. Dynamic Retrofit Client
+object RetrofitClient {
+    private var apiService: ApiService? = null
+
+    // We use a getter so we can check if it exists or needs rebuilding
+    val instance: ApiService
+        get() {
+            if (apiService == null) {
+                rebuild()
+            }
+            return apiService!!
+        }
+
+    fun rebuild() {
+        // Ensure URL ends with /
+        val url = if (ServerConfig.currentBaseUrl.endsWith("/"))
+            ServerConfig.currentBaseUrl
+        else
+            "${ServerConfig.currentBaseUrl}/"
+
+        apiService = Retrofit.Builder()
+            .baseUrl(url)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(ApiService::class.java)
+    }
+
+    // Call this when the user changes settings
+    fun updateUrl(newUrl: String) {
+        ServerConfig.currentBaseUrl = newUrl
+        apiService = null // Force null so next call triggers rebuild
     }
 }

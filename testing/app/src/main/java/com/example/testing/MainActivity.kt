@@ -16,6 +16,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,6 +32,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.testing.ui.theme.TestingTheme
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
@@ -41,7 +44,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            TestingTheme {
+            // CHANGE THIS LINE:
+            // Force darkTheme to true, ignoring the system setting
+            TestingTheme(darkTheme = true) {
+
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     SpeechToTextScreen(modifier = Modifier.padding(innerPadding))
                 }
@@ -61,21 +67,22 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     var manualInputText by remember { mutableStateOf("") }
 
-    // Removed global risk state variables (riskPercentage, etc.) as requested
+    // State for Server Settings Dialog
+    var showServerDialog by remember { mutableStateOf(false) }
 
     fun checkScamRisk(id: String, textToCheck: String) {
         scope.launch {
             try {
+                // RetrofitClient.instance will now use whatever URL is currently configured
                 val request = ScamCheckRequest(message = textToCheck)
                 val response = RetrofitClient.instance.checkMessage(request)
 
                 val score = (response.scam_probability * 100).toInt()
-
-                // Pass the advice to the specific item
                 speechRecognizer.updateRisk(id, score, response.advice)
 
             } catch (e: Exception) {
                 Log.e("ScamCheck", "Error: ${e.message}")
+                // Optional: Show error in UI
             }
         }
     }
@@ -99,6 +106,17 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
         else -> "EN"
     }
 
+    // --- SERVER SELECTION DIALOG ---
+    if (showServerDialog) {
+        ServerSelectionDialog(
+            onDismiss = { showServerDialog = false },
+            onUrlSelected = { newUrl ->
+                RetrofitClient.updateUrl(newUrl)
+                showServerDialog = false
+            }
+        )
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -112,6 +130,19 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                 .background(MaterialTheme.colorScheme.surfaceContainer)
                 .padding(16.dp)
         ) {
+            // SETTINGS BUTTON (Top Left)
+            IconButton(
+                onClick = { showServerDialog = true },
+                modifier = Modifier.align(Alignment.TopStart)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Server Settings",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            // LANGUAGE BUTTON (Top Right)
             Button(
                 onClick = { speechRecognizer.toggleLanguage() },
                 modifier = Modifier.align(Alignment.TopEnd),
@@ -128,12 +159,12 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                     text = "即時語音轉錄",
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.align(Alignment.Start)
+                    // Center the title since we have buttons on both sides now
+                    textAlign = TextAlign.Center
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Use Crossfade for smoother transitions
                 Crossfade(
                     targetState = speechRecognizer.recognizedText.value to speechRecognizer.partialText.value,
                     label = "speech-text"
@@ -161,12 +192,14 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                             )
                         }
 
-                        // Show placeholder when nothing is being recognized
                         if (recognized.isEmpty() && partial.isEmpty()) {
                             Text(
-                                text = "點擊錄音按鈕開始說話...",
+                                // CHECK: If recording, say "Listening", else say "Click to start"
+                                text = if (speechRecognizer.isRecording.value) "聆聽中..." else "點擊錄音按鈕開始說話...",
+
                                 fontSize = 16.sp,
-                                color = Color.Gray,
+                                // OPTIONAL: Change color to indicate activity
+                                color = if (speechRecognizer.isRecording.value) MaterialTheme.colorScheme.primary else Color.Gray,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -180,10 +213,8 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                     onClick = {
                         if (recordAudioPermission.status.isGranted) {
                             if (speechRecognizer.isRecording.value) {
-                                // OPTIMIZATION: Use the dedicated stop method
                                 speechRecognizer.stopRecording()
                             } else {
-                                // OPTIMIZATION: Use the dedicated start method
                                 speechRecognizer.startRecording()
                             }
                         } else {
@@ -333,8 +364,104 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                 }
             }
         }
-        // Removed the MeterBar call that was here
     }
+}
+
+// --- NEW COMPONENT: SERVER SELECTION DIALOG ---
+@Composable
+fun ServerSelectionDialog(
+    onDismiss: () -> Unit,
+    onUrlSelected: (String) -> Unit
+) {
+    val presets = ServerConfig.PRESETS
+    var selectedOption by remember { mutableStateOf(ServerConfig.currentBaseUrl) }
+    var customUrl by remember { mutableStateOf("") }
+
+    // Check if current is a custom URL
+    val isCustomInitially = presets.none { it.first == ServerConfig.currentBaseUrl }
+    var isCustomSelected by remember { mutableStateOf(isCustomInitially) }
+
+    if (isCustomInitially && customUrl.isEmpty()) {
+        customUrl = ServerConfig.currentBaseUrl
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("選擇偵測伺服器") },
+        text = {
+            Column {
+                // Presets
+                presets.forEach { (url, label) ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedOption = url
+                                isCustomSelected = false
+                            }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        RadioButton(
+                            selected = (selectedOption == url && !isCustomSelected),
+                            onClick = {
+                                selectedOption = url
+                                isCustomSelected = false
+                            }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(text = label, style = MaterialTheme.typography.bodyMedium)
+                            Text(text = url, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        }
+                    }
+                }
+
+                // Custom Option
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { isCustomSelected = true }
+                        .padding(vertical = 4.dp)
+                ) {
+                    RadioButton(
+                        selected = isCustomSelected,
+                        onClick = { isCustomSelected = true }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "手動輸入 (Custom)", style = MaterialTheme.typography.bodyMedium)
+                }
+
+                if (isCustomSelected) {
+                    OutlinedTextField(
+                        value = customUrl,
+                        onValueChange = { customUrl = it },
+                        label = { Text("請輸入網址") },
+                        placeholder = { Text("http://...") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val finalUrl = if (isCustomSelected) customUrl else selectedOption
+                    if (finalUrl.isNotBlank()) {
+                        onUrlSelected(finalUrl)
+                    }
+                }
+            ) {
+                Text("確定")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
 }
 
 @Composable
@@ -343,6 +470,10 @@ fun TranscriptionItem(
     onUpdate: (String) -> Unit,
     onDelete: () -> Unit
 ) {
+    // ... (Keep the exact same code for TranscriptionItem as before) ...
+    // Just copy the existing TranscriptionItem code here to complete the file.
+    // For brevity in this response, I assume you will keep the existing logic.
+
     var isEditing by remember { mutableStateOf(false) }
     var editedText by remember(transcription.id) { mutableStateOf(transcription.text) }
 
@@ -356,7 +487,6 @@ fun TranscriptionItem(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
 
-            // --- RISK BADGE AND ADVICE ---
             if (transcription.riskScore != null) {
                 val score = transcription.riskScore
                 val (color, text) = when {
@@ -379,7 +509,6 @@ fun TranscriptionItem(
                     )
                 }
 
-                // AI ADVICE DISPLAY (Newly added inside the card)
                 if (!transcription.advice.isNullOrEmpty()) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Box(
@@ -410,7 +539,6 @@ fun TranscriptionItem(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // --- EDITING / TEXT DISPLAY ---
             if (isEditing) {
                 OutlinedTextField(
                     value = editedText,
