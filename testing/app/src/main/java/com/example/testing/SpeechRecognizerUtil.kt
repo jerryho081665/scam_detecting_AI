@@ -18,7 +18,9 @@ data class Transcription(
     val id: String = UUID.randomUUID().toString(),
     val text: String,
     val riskScore: Int? = null,
-    val advice: String? = null
+    val advice: String? = null,
+    // NEW: Loading state for UI
+    val isAdviceLoading: Boolean = false
 )
 
 class SpeechRecognizerUtil(private val context: Context) {
@@ -28,10 +30,7 @@ class SpeechRecognizerUtil(private val context: Context) {
     val currentLanguage = mutableStateOf("zh-TW")
 
     // STATES
-    // "isRecording" now means: Is the App in "Recording Mode"? (User pressed Start)
     val isRecording = mutableStateOf(false)
-
-    // "isListening" means: Is the Microphone actually open right now?
     private val isListeningInternal = mutableStateOf(false)
 
     val recognizedText = mutableStateOf("")
@@ -70,23 +69,19 @@ class SpeechRecognizerUtil(private val context: Context) {
             }
             Log.e("SpeechRecognizer", "Error: $message ($error)")
 
-            // OPTIMIZATION: Only stop for critical errors.
-            // For Timeouts or No Match, we just restart immediately.
             if (isRecording.value) {
                 when (error) {
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
                     SpeechRecognizer.ERROR_NO_MATCH -> {
-                        restartListening() // Auto-restart on silence
+                        restartListening()
                     }
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
-                        // Wait a tiny bit then retry
                         CoroutineScope(Dispatchers.Main).launch {
                             delay(500)
                             restartListening()
                         }
                     }
                     else -> {
-                        // Critical error, stop recording to prevent infinite loops
                         isRecording.value = false
                         errorState.value = message
                     }
@@ -98,27 +93,20 @@ class SpeechRecognizerUtil(private val context: Context) {
             results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.let {
                 if (it.isNotEmpty()) {
                     val finalText = it[0]
-
-                    // Only update if we got meaningful text (not empty or very short)
                     if (finalText.isNotBlank() && finalText.length > 1) {
-
-                        // 1. Add to History immediately
                         val newHistory = transcriptionHistory.value.toMutableList()
                         newHistory.add(0, Transcription(text = finalText))
                         transcriptionHistory.value = newHistory
 
-                        // 2. CLEAR the "Live" text immediately
-                        // This ensures the main box empties out after recording is done
                         recognizedText.value = ""
                         partialText.value = ""
                     }
                 }
             }
 
-            // OPTIMIZATION: Add a small delay before restarting to prevent flickering
             if (isRecording.value) {
                 CoroutineScope(Dispatchers.Main).launch {
-                    delay(300) // Small delay to stabilize the UI
+                    delay(300)
                     restartListening()
                 }
             }
@@ -128,7 +116,6 @@ class SpeechRecognizerUtil(private val context: Context) {
             partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.let {
                 if (it.isNotEmpty()) {
                     val partial = it[0]
-                    // Only update if we have meaningful partial text
                     if (partial.isNotBlank() && partial.length > 1) {
                         partialText.value = partial
                     }
@@ -149,27 +136,20 @@ class SpeechRecognizerUtil(private val context: Context) {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, currentLanguage.value)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-
-            // --- OPTIMIZATION START ---
-            // Allow 10 seconds of silence before the system cuts off (Default is usually very short)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 10000L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 10000L)
-            // Minimum length of recording to consider valid
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
-            // --- OPTIMIZATION END ---
         }
     }
 
     fun startRecording() {
-        if (isRecording.value) return // Already recording
-
+        if (isRecording.value) return
         isRecording.value = true
         errorState.value = null
         startListening()
     }
 
     private fun startListening() {
-        // Run on Main thread to be safe
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 speechRecognizer?.startListening(createIntent())
@@ -182,7 +162,6 @@ class SpeechRecognizerUtil(private val context: Context) {
 
     private fun restartListening() {
         if (!isRecording.value) return
-        // Tiny delay to ensure the engine is ready
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 speechRecognizer?.startListening(createIntent())
@@ -199,7 +178,6 @@ class SpeechRecognizerUtil(private val context: Context) {
         partialText.value = ""
     }
 
-    // Sometimes the recognizer freezes, this hard-resets it
     private fun restartRecognizer() {
         speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
@@ -218,7 +196,6 @@ class SpeechRecognizerUtil(private val context: Context) {
             else -> "zh-TW"
         }
 
-        // Restart automatically if we were recording
         if (wasRecording) {
             startRecording()
         }
@@ -237,17 +214,23 @@ class SpeechRecognizerUtil(private val context: Context) {
         }
     }
 
-    // Existing updateRisk (Keep this to set the initial score)
     fun updateRisk(id: String, score: Int, advice: String?) {
         transcriptionHistory.value = transcriptionHistory.value.map {
             if (it.id == id) it.copy(riskScore = score, advice = advice) else it
         }
     }
 
-    // NEW: Update only the advice (used for the 2nd step)
+    // NEW: Set loading state
+    fun setAdviceLoading(id: String, isLoading: Boolean) {
+        transcriptionHistory.value = transcriptionHistory.value.map {
+            if (it.id == id) it.copy(isAdviceLoading = isLoading) else it
+        }
+    }
+
+    // UPDATE: Clear loading state when advice is set
     fun updateAdvice(id: String, advice: String) {
         transcriptionHistory.value = transcriptionHistory.value.map {
-            if (it.id == id) it.copy(advice = advice) else it
+            if (it.id == id) it.copy(advice = advice, isAdviceLoading = false) else it
         }
     }
 
