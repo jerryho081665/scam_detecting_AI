@@ -95,23 +95,31 @@ class SpeechRecognizerUtil(private val context: Context, private val dao: Transc
                 soundLevel.floatValue = 0f
             }
         }
+
+        // --- UPDATED ERROR HANDLING ---
         override fun onError(error: Int) {
             if (ServerConfigAsr.currentProvider.id != "google") return
             isListeningInternal.value = false
             soundLevel.floatValue = 0f
 
+            // Determine the error message
             val message = when (error) {
                 SpeechRecognizer.ERROR_NO_MATCH -> "No match"
                 SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Timeout"
+                // Check for Error 5 (Client) or 12 (Language/Init issues)
+                5, 12 -> "Google 服務異常 (代碼 $error)。建議前往設定切換為「Yating」來源。"
                 else -> "Error: $error"
             }
+
             if (isRecording.value) {
                 when (error) {
+                    // Retry logic for recoverable errors
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
                     SpeechRecognizer.ERROR_NO_MATCH -> { restartListening() }
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
                         CoroutineScope(Dispatchers.Main).launch { delay(500); restartListening() }
                     }
+                    // Stop recording and show advice for fatal errors (including 5 and 12)
                     else -> {
                         isRecording.value = false
                         errorState.value = message
@@ -119,6 +127,7 @@ class SpeechRecognizerUtil(private val context: Context, private val dao: Transc
                 }
             }
         }
+
         override fun onResults(results: Bundle?) {
             results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.let {
                 if (it.isNotEmpty()) handleFinalResult(it[0])
@@ -134,7 +143,6 @@ class SpeechRecognizerUtil(private val context: Context, private val dao: Transc
         }
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
-
     // =========================================================================
     // 2. INIT BLOCK
     // =========================================================================

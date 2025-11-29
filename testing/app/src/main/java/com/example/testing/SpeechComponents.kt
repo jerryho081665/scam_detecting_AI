@@ -11,7 +11,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-// import androidx.compose.ui.draw.scale // Removed: No longer needed as Switch is gone
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -27,7 +26,8 @@ fun SettingsDialog(
     initialShowManualInput: Boolean,
     availableVoices: List<Voice>,
     onDismiss: () -> Unit,
-    onConfirm: (String, Boolean, AdviceProvider, AsrProvider, String, Boolean, String) -> Unit
+    // UPDATED: Added Boolean at the end for vibration
+    onConfirm: (String, Boolean, AdviceProvider, AsrProvider, String, Boolean, String, Boolean) -> Unit
 ) {
     val presets = ServerConfig.PRESETS
     var selectedOption by remember { mutableStateOf(ServerConfig.currentBaseUrl) }
@@ -80,7 +80,9 @@ fun SettingsDialog(
     var selectedAsrProvider by remember { mutableStateOf(ServerConfigAsr.currentProvider) }
     var yatingApiKey by remember { mutableStateOf(ServerConfigAsr.yatingApiKey) }
 
+    // Alert settings
     var isTtsEnabled by remember { mutableStateOf(TtsConfig.isEnabled) }
+    var isVibrationEnabled by remember { mutableStateOf(AlertConfig.isVibrationEnabled) } // NEW
     var selectedVoiceName by remember { mutableStateOf(TtsConfig.currentVoiceName) }
     var isVoiceDropdownExpanded by remember { mutableStateOf(false) }
 
@@ -267,10 +269,23 @@ fun SettingsDialog(
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
-                // --- SECTION 4: TTS Settings ---
-                Text("4. 語音警示設定 (TTS)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                // --- SECTION 4: Alert Settings (TTS + Vibration) ---
+                Text("4. 警示設定 (Alerts)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(8.dp))
 
+                // 1. Vibration Toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("啟用震動警示")
+                    Switch(checked = isVibrationEnabled, onCheckedChange = { isVibrationEnabled = it })
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // 2. TTS Toggle
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -377,7 +392,8 @@ fun SettingsDialog(
                         selectedAsrProvider,
                         yatingApiKey,
                         isTtsEnabled,
-                        selectedVoiceName
+                        selectedVoiceName,
+                        isVibrationEnabled // Pass new vibration state
                     )
                 }
             }) { Text("確定") }
@@ -391,7 +407,6 @@ fun SettingsDialog(
 // RiskLevelMeter and TranscriptionItem can remain unchanged below...
 @Composable
 fun RiskLevelMeter(score: Int, highestRiskAdvice: String?, isLoading: Boolean) {
-    // ... (Use the code from your previous file)
     val animatedProgress by animateFloatAsState(targetValue = score / 100f, label = "riskProgress")
     val (color, label, iconId) = when {
         score > 70 -> Triple(MaterialTheme.colorScheme.error, "高度危險", android.R.drawable.ic_dialog_alert)
@@ -451,7 +466,6 @@ fun TranscriptionItem(
     onUpdate: (String) -> Unit,
     onDelete: () -> Unit
 ) {
-    // ... (Paste your TranscriptionItem code here, it is unchanged)
     var isEditing by remember { mutableStateOf(false) }
     var editedText by remember(transcription.id) { mutableStateOf(transcription.text) }
 

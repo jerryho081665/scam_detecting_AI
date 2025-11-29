@@ -150,7 +150,11 @@ fun SpeechToTextScreen(
         val item = highestRiskItem
         if (item != null && item.riskScore != null && item.riskScore > 70) {
             if (!item.advice.isNullOrBlank() && !item.isAdviceLoading) {
-                vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500), -1))
+                // UPDATED: Check configuration before vibrating
+                if (AlertConfig.isVibrationEnabled) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500), -1))
+                }
+
                 if (TtsConfig.isEnabled) {
                     if (TtsConfig.currentVoiceName.isNotBlank()) {
                         val voice = availableVoices.find { it.name == TtsConfig.currentVoiceName }
@@ -294,10 +298,12 @@ fun SpeechToTextScreen(
             initialShowManualInput = showManualInput,
             availableVoices = availableVoices,
             onDismiss = { showSettingsDialog = false },
-            onConfirm = { newUrl, newShowManualInput, newAdviceProvider, newAsrProvider, newYatingKey, newTtsEnabled, newVoiceName ->
+            // UPDATED: Handle the new vibration boolean parameter
+            onConfirm = { newUrl, newShowManualInput, newAdviceProvider, newAsrProvider, newYatingKey, newTtsEnabled, newVoiceName, newVibrationEnabled ->
                 RetrofitClientSlow.updateSettings(newUrl, newAdviceProvider, newAsrProvider, newYatingKey)
                 TtsConfig.isEnabled = newTtsEnabled
                 TtsConfig.currentVoiceName = newVoiceName
+                AlertConfig.isVibrationEnabled = newVibrationEnabled // Update config
                 showManualInput = newShowManualInput
                 showSettingsDialog = false
             }
@@ -322,8 +328,6 @@ fun SpeechToTextScreen(
             ) {
                 Icon(Icons.Default.Settings, "Settings", tint = MaterialTheme.colorScheme.primary)
             }
-
-            // --- REMOVED: Language Toggle Button was here ---
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("即時語音轉錄", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)

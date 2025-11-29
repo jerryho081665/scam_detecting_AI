@@ -74,6 +74,11 @@ object TtsConfig {
     var currentVoiceName: String = ""
 }
 
+// --- NEW: Alert Configuration ---
+object AlertConfig {
+    var isVibrationEnabled: Boolean = true
+}
+
 // 2. Interface
 interface ApiServiceSlow {
     @POST
