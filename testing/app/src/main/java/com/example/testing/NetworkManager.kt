@@ -37,7 +37,7 @@ data class OpenAIRequest(
     val model: String,
     val messages: List<Message>,
     val reasoning: Reasoning? = null,
-    val max_tokens: Int = 1500 // UPDATED: Increased from 200 to 1500
+    val max_tokens: Int = 1500
 )
 
 data class Reasoning(
@@ -72,7 +72,7 @@ data class AdviceProvider(
     val apiKey: String,
     val modelId: String,
     val useAuthHeader: Boolean,
-    val supportsReasoning: Boolean // NEW: Controls if 'reasoning' field is sent
+    val supportsReasoning: Boolean
 )
 
 object ServerConfig {
@@ -107,22 +107,25 @@ object RetrofitClientFast {
 }
 
 object ServerConfigAdvice {
+    // Constant for the manual option name to identify it in the UI
+    const val MANUAL_PROVIDER_NAME = "Manual Input (Qwen)"
+
     val PROVIDERS = listOf(
         AdviceProvider(
             name = "OpenRouter (Grok)",
             baseUrl = "https://openrouter.ai/api/v1/",
-            apiKey = "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",
+            apiKey = "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",
             modelId = "x-ai/grok-4.1-fast:free",
             useAuthHeader = true,
-            supportsReasoning = true // Keeps existing behavior for Grok
+            supportsReasoning = true
         ),
         AdviceProvider(
             name = "OpenRouter (Chimera)",
             baseUrl = "https://openrouter.ai/api/v1/",
-            apiKey = "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",
+            apiKey = "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",
             modelId = "tngtech/tng-r1t-chimera:free",
             useAuthHeader = true,
-            supportsReasoning = false // Ensures extra_body is empty (null in JSON)
+            supportsReasoning = false
         ),
         AdviceProvider(
             name = "Local (Qwen)",
@@ -130,7 +133,25 @@ object ServerConfigAdvice {
             apiKey = "7a4c019c-db87-4e21-b90e-9cfc75057f7e",
             modelId = "qwen/qwen3-30b-a3b-2507",
             useAuthHeader = false,
-            supportsReasoning = false // Local usually doesn't need this extension
+            supportsReasoning = false
+        ),
+        // NEW OPTION 1: Backup Qwen
+        AdviceProvider(
+            name = "Local (Qwen - Backup)",
+            baseUrl = "https://ai-anti-scam2.443.gs/v1/",
+            apiKey = "7a4c019c-db87-4e21-b90e-9cfc75057f7e",
+            modelId = "qwen/qwen3-30b-a3b-2507",
+            useAuthHeader = false,
+            supportsReasoning = false
+        ),
+        // NEW OPTION 2: Manual Input
+        AdviceProvider(
+            name = MANUAL_PROVIDER_NAME,
+            baseUrl = "", // Placeholder, will be filled by UI
+            apiKey = "7a4c019c-db87-4e21-b90e-9cfc75057f7e",
+            modelId = "qwen/qwen3-30b-a3b-2507",
+            useAuthHeader = false,
+            supportsReasoning = false
         )
     )
 
@@ -152,7 +173,6 @@ object RetrofitClientSlow {
             return apiService!!
         }
 
-    // UPDATED: Now checks provider.supportsReasoning
     fun convert(request: ScamCheckRequest): OpenAIRequest {
         val provider = ServerConfigAdvice.currentProvider
 
@@ -168,12 +188,12 @@ object RetrofitClientSlow {
                     content = "電話內容:" + request.message
                 )
             ),
-            // Logic: If supported, send { enabled: false }, otherwise send null (omitted from JSON)
             reasoning = if (provider.supportsReasoning) Reasoning(enabled = false) else null
         )
     }
 
     fun rebuild() {
+        // This rebuilds the generic client, but the URL is passed dynamically in the interface method
         val url = "https://google.com/"
         apiService = Retrofit.Builder()
             .baseUrl(url)

@@ -1,10 +1,16 @@
 package com.example.testing
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,7 +26,6 @@ import androidx.compose.ui.unit.dp
 fun SettingsDialog(
     initialShowManualInput: Boolean,
     onDismiss: () -> Unit,
-    // UPDATED: Now returns the selected AdviceProvider as well
     onConfirm: (url: String, showManualInput: Boolean, adviceProvider: AdviceProvider) -> Unit
 ) {
     // 1. Detection Server State
@@ -34,18 +39,36 @@ fun SettingsDialog(
         customUrl = ServerConfig.currentBaseUrl
     }
 
-    // 2. Advice Provider State (NEW)
+    // 2. Advice Provider State
     val adviceProviders = ServerConfigAdvice.PROVIDERS
     var selectedAdviceProvider by remember { mutableStateOf(ServerConfigAdvice.currentProvider) }
 
+    // Logic for Manual Advice Input
+    val isManualAdviceName = ServerConfigAdvice.MANUAL_PROVIDER_NAME
+    var customAdviceUrl by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        if (selectedAdviceProvider.name == isManualAdviceName) {
+            customAdviceUrl = selectedAdviceProvider.baseUrl
+        }
+    }
+
     // 3. UI State
     var tempShowManualInput by remember { mutableStateOf(initialShowManualInput) }
+
+    // 4. Scroll State
+    val scrollState = rememberScrollState()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("應用程式設定") },
         text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            // UPDATED: Added verticalScroll to the Column
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(scrollState)
+            ) {
                 // --- SECTION 1: Detection Server ---
                 Text("1. 詐騙偵測伺服器", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(8.dp))
@@ -69,31 +92,33 @@ fun SettingsDialog(
                         }
                     }
                 }
-                // Custom URL option logic remains the same...
+
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.clickable { isCustomSelected = true }.padding(vertical = 4.dp)
                 ) {
                     RadioButton(selected = isCustomSelected, onClick = { isCustomSelected = true })
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = "手動輸入", style = MaterialTheme.typography.bodyMedium)
+                    Text(text = "manual input", style = MaterialTheme.typography.bodyMedium)
                 }
                 if (isCustomSelected) {
                     OutlinedTextField(
                         value = customUrl,
                         onValueChange = { customUrl = it },
-                        label = { Text("請輸入網址") },
+                        label = { Text("http") },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
-                // --- SECTION 2: Advice AI Model (NEW) ---
+                // --- SECTION 2: Advice AI Model ---
                 Text("2. AI 建議模型", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(8.dp))
 
                 adviceProviders.forEach { provider ->
+                    val isThisSelected = selectedAdviceProvider.name == provider.name
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -102,14 +127,29 @@ fun SettingsDialog(
                             .padding(vertical = 4.dp)
                     ) {
                         RadioButton(
-                            selected = (selectedAdviceProvider.name == provider.name),
+                            selected = isThisSelected,
                             onClick = { selectedAdviceProvider = provider }
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(text = provider.name, style = MaterialTheme.typography.bodyMedium)
-                            Text(text = provider.modelId, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            if (provider.name != isManualAdviceName) {
+                                Text(text = provider.baseUrl, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            }
                         }
+                    }
+
+                    if (provider.name == isManualAdviceName && isThisSelected) {
+                        OutlinedTextField(
+                            value = customAdviceUrl,
+                            onValueChange = { customAdviceUrl = it },
+                            label = { Text("API URL (v1/)") },
+                            placeholder = { Text("https://your-url.com/v1/") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 32.dp, bottom = 8.dp),
+                            singleLine = true
+                        )
                     }
                 }
 
@@ -133,8 +173,15 @@ fun SettingsDialog(
         confirmButton = {
             Button(onClick = {
                 val finalUrl = if (isCustomSelected) customUrl else selectedOption
+
+                val finalAdviceProvider = if (selectedAdviceProvider.name == isManualAdviceName) {
+                    selectedAdviceProvider.copy(baseUrl = customAdviceUrl)
+                } else {
+                    selectedAdviceProvider
+                }
+
                 if (finalUrl.isNotBlank()) {
-                    onConfirm(finalUrl, tempShowManualInput, selectedAdviceProvider)
+                    onConfirm(finalUrl, tempShowManualInput, finalAdviceProvider)
                 }
             }) { Text("確定") }
         },
@@ -147,15 +194,11 @@ fun SettingsDialog(
 // RiskLevelMeter and TranscriptionItem remain unchanged
 @Composable
 fun RiskLevelMeter(score: Int, highestRiskAdvice: String?, isLoading: Boolean) {
-    // ... (Keep existing code from previous file) ...
-    // Copy the content of RiskLevelMeter from the previous step here
-    // For brevity, I am not repeating the full visual code unless you need it,
-    // but ensure you copy the RiskLevelMeter function from the previous split file.
     val animatedProgress by animateFloatAsState(targetValue = score / 100f, label = "riskProgress")
     val (color, label, iconId) = when {
-        score > 70 -> Triple(MaterialTheme.colorScheme.error, "高度危險 (DANGER)", android.R.drawable.ic_dialog_alert)
-        score >= 50 -> Triple(Color(0xFFFFA000), "中度風險 (WARNING)", android.R.drawable.ic_dialog_info)
-        else -> Triple(Color(0xFF4CAF50), "安全 (SAFE)", android.R.drawable.ic_lock_idle_lock)
+        score > 70 -> Triple(MaterialTheme.colorScheme.error, "高度危險", android.R.drawable.ic_dialog_alert)
+        score >= 50 -> Triple(Color(0xFFFFFFA0), "中度風險", android.R.drawable.ic_dialog_info)
+        else -> Triple(Color(0xFF4CAF50), "安全", android.R.drawable.ic_lock_idle_lock)
     }
 
     Card(
@@ -183,7 +226,7 @@ fun RiskLevelMeter(score: Int, highestRiskAdvice: String?, isLoading: Boolean) {
                     Spacer(modifier = Modifier.height(12.dp))
                     HorizontalDivider(color = color.copy(alpha = 0.3f))
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(text = "主要警告 (Main Warning):", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = color)
+                    Text(text = "防騙建議:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = color)
                     Spacer(modifier = Modifier.height(4.dp))
                     if (isLoading) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -199,48 +242,145 @@ fun RiskLevelMeter(score: Int, highestRiskAdvice: String?, isLoading: Boolean) {
         }
     }
 }
-
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TranscriptionItem(transcription: Transcription, onUpdate: (String) -> Unit, onDelete: () -> Unit) {
-    // ... (Keep existing code from previous file) ...
-    // Copy the content of TranscriptionItem from the previous split file here.
+fun TranscriptionItem(
+    transcription: Transcription,
+    isSelectionMode: Boolean,
+    isSelected: Boolean,
+    onToggleSelection: () -> Unit,
+    onUpdate: (String) -> Unit,
+    onDelete: () -> Unit
+) {
     var isEditing by remember { mutableStateOf(false) }
     var editedText by remember(transcription.id) { mutableStateOf(transcription.text) }
 
+    val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
+    val borderWidth = if (isSelected) 2.dp else 0.dp
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(borderWidth, borderColor, RoundedCornerShape(12.dp)),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected)
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            else
+                MaterialTheme.colorScheme.surfaceContainerLow
+        )
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            if (transcription.riskScore != null) {
-                val score = transcription.riskScore
-                val (color, text) = when {
-                    score > 70 -> MaterialTheme.colorScheme.error to "⚠️ 高風險 ($score%)"
-                    score < 50 -> Color(0xFF4CAF50) to "✅ 安全 ($score%)"
-                    else -> Color(0xFFFFFFA0) to "⚠️ 需留意 ($score%)"
-                }
-                Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(color.copy(alpha = 0.2f)).padding(horizontal = 8.dp, vertical = 4.dp)) {
-                    Text(text = text, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = color)
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-            if (isEditing) {
-                OutlinedTextField(value = editedText, onValueChange = { editedText = it }, modifier = Modifier.fillMaxWidth(), textStyle = MaterialTheme.typography.bodyLarge)
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    Button(onClick = { onUpdate(editedText); isEditing = false }, modifier = Modifier.height(36.dp), contentPadding = PaddingValues(horizontal = 12.dp)) { Text("儲存") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isSelectionMode) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onToggleSelection() },
+                        modifier = Modifier.size(24.dp)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Button(onClick = { editedText = transcription.text; isEditing = false }, colors = ButtonDefaults.buttonColors(containerColor = Color.Gray), modifier = Modifier.height(36.dp), contentPadding = PaddingValues(horizontal = 12.dp)) { Text("取消") }
+                }
+
+                if (transcription.riskScore != null) {
+                    val score = transcription.riskScore
+                    val (color, text) = when {
+                        score > 70 -> MaterialTheme.colorScheme.error to "⚠️ 高風險 ($score%)"
+                        score < 50 -> Color(0xFF4CAF50) to "✅ 安全 ($score%)"
+                        else -> Color(0xFFFFFFA0) to "⚠️ 需留意 ($score%)"
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(color.copy(alpha = 0.2f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = text,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = color
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (isEditing) {
+                OutlinedTextField(
+                    value = editedText,
+                    onValueChange = { editedText = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodyLarge
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Button(
+                        onClick = { onUpdate(editedText); isEditing = false },
+                        modifier = Modifier.height(36.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp)
+                    ) { Text("儲存") }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = { editedText = transcription.text; isEditing = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
+                        modifier = Modifier.height(36.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp)
+                    ) { Text("取消") }
                 }
             } else {
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                    Text(text = transcription.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f).clickable { editedText = transcription.text; isEditing = true }.padding(end = 8.dp))
-                    Column {
-                        Icon(painter = painterResource(id = android.R.drawable.ic_menu_edit), contentDescription = "編輯", modifier = Modifier.size(20.dp).clickable { editedText = transcription.text; isEditing = true }, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Icon(painter = painterResource(id = android.R.drawable.ic_menu_delete), contentDescription = "刪除", modifier = Modifier.size(20.dp).clickable { onDelete() }, tint = MaterialTheme.colorScheme.error)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Text(
+                        text = transcription.text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp)
+                            .combinedClickable(
+                                onClick = {
+                                    if (isSelectionMode) {
+                                        onToggleSelection()
+                                    } else {
+                                        editedText = transcription.text
+                                        isEditing = true
+                                    }
+                                },
+                                onLongClick = {
+                                    onToggleSelection()
+                                }
+                            )
+                    )
+
+                    if (!isSelectionMode) {
+                        Column {
+                            Icon(
+                                painter = painterResource(id = android.R.drawable.ic_menu_edit),
+                                contentDescription = "編輯",
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clickable {
+                                        editedText = transcription.text
+                                        isEditing = true
+                                    },
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Icon(
+                                painter = painterResource(id = android.R.drawable.ic_menu_delete),
+                                contentDescription = "刪除",
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clickable { onDelete() },
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
             }

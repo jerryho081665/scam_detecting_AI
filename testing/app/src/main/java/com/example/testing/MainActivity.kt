@@ -1,7 +1,13 @@
 package com.example.testing
 
 import android.Manifest
+import android.content.Context
+import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -39,24 +45,51 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
+    private var tts: TextToSpeech? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 1. Initialize TextToSpeech
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                // Try Taiwan Chinese first, fallback to generic Chinese
+                val result = tts?.setLanguage(Locale.TAIWAN)
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    tts?.setLanguage(Locale.CHINESE)
+                }
+            }
+        }
+
         enableEdgeToEdge()
         setContent {
             TestingTheme(darkTheme = true) {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    SpeechToTextScreen(modifier = Modifier.padding(innerPadding))
+                    SpeechToTextScreen(
+                        modifier = Modifier.padding(innerPadding),
+                        tts = tts
+                    )
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        tts?.stop()
+        tts?.shutdown()
+        super.onDestroy()
     }
 }
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun SpeechToTextScreen(modifier: Modifier = Modifier) {
+fun SpeechToTextScreen(
+    modifier: Modifier = Modifier,
+    tts: TextToSpeech?
+) {
     val context = LocalContext.current
     val recordAudioPermission = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
     val speechRecognizer = remember { SpeechRecognizerUtil(context) }
@@ -65,9 +98,24 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     var manualInputText by remember { mutableStateOf("") }
 
+    // --- VIBRATION SETUP ---
+    val vibrator = remember {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vibratorManager.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
+    }
+
     // --- SETTINGS STATE ---
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showManualInput by remember { mutableStateOf(true) }
+
+    // --- SELECTION & COMBINE STATE ---
+    var isSelectionMode by remember { mutableStateOf(false) }
+    val selectedIds = remember { mutableStateListOf<String>() }
 
     // --- LOGIC: Calculate Highest Risk Item ---
     val highestRiskItem by remember {
@@ -80,9 +128,35 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
 
     val maxRiskScore = highestRiskItem?.riskScore ?: 0
     val maxRiskAdvice = highestRiskItem?.advice
-    // NEW: Get loading state
     val isRiskLoading = highestRiskItem?.isAdviceLoading ?: false
 
+    // --- ALERT SYSTEM (TTS + Vibration) ---
+    // This watches for new high-risk items and triggers the physical warnings
+    LaunchedEffect(highestRiskItem) {
+        val item = highestRiskItem
+        // Threshold: 70%
+        if (item != null && item.riskScore != null && item.riskScore > 70) {
+            // Only alert if we have advice and it hasn't been "handled" (simple check for now)
+            if (!item.advice.isNullOrBlank() && !item.isAdviceLoading) {
+
+                // 1. Vibrate (Heavy pattern)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500), -1))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(500)
+                }
+
+                // 2. Speak
+                tts?.speak(
+                    "注意！偵測到高風險詐騙內容。AI建議：${item.advice}",
+                    TextToSpeech.QUEUE_FLUSH,
+                    null,
+                    "ALERT_${item.id}"
+                )
+            }
+        }
+    }
 
     fun checkScamRisk(id: String, textToCheck: String) {
         scope.launch {
@@ -95,7 +169,7 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                 speechRecognizer.updateRisk(id, score, null)
 
                 // STEP 2: SLOW Request (Advice)
-                if (score > 0) {
+                if (score > 50) {
                     speechRecognizer.setAdviceLoading(id, true)
 
                     try {
@@ -124,8 +198,6 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                         // 4. Extract and Clean Text
                         var adviceText = adviceResponse.choices.firstOrNull()?.message?.content
                             ?: "無法取得建議"
-
-                        // UPDATED: Remove <think> tags if present (Common in R1/Chimera models)
                         adviceText = adviceText.replace(Regex("<think>.*?</think>", RegexOption.DOT_MATCHES_ALL), "").trim()
 
                         speechRecognizer.updateAdvice(id, adviceText)
@@ -141,7 +213,24 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
         }
     }
 
+    // --- COMBINE LOGIC ---
+    fun combineAndEvaluate() {
+        val allItems = speechRecognizer.transcriptionHistory.value
+        val selectedItems = allItems.filter { it.id in selectedIds }
 
+        if (selectedItems.isNotEmpty()) {
+            val sortedItems = selectedItems.reversed()
+            val combinedText = sortedItems.joinToString("，") { it.text }
+
+            val newId = speechRecognizer.addCombinedTranscription(combinedText)
+            checkScamRisk(newId, combinedText)
+
+            selectedIds.clear()
+            isSelectionMode = false
+        }
+    }
+
+    // Auto-check logic
     LaunchedEffect(speechRecognizer.transcriptionHistory.value.size) {
         val history = speechRecognizer.transcriptionHistory.value
         if (history.isNotEmpty()) {
@@ -165,7 +254,6 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
         SettingsDialog(
             initialShowManualInput = showManualInput,
             onDismiss = { showSettingsDialog = false },
-            // UPDATED: Handle new Advice Provider parameter
             onConfirm = { newUrl, newShowManualInput, newAdviceProvider ->
                 RetrofitClientSlow.updateSettings(newUrl, newAdviceProvider)
                 showManualInput = newShowManualInput
@@ -217,7 +305,15 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                     textAlign = TextAlign.Center
                 )
 
+                // --- NEW VISUALIZER ---
                 Spacer(modifier = Modifier.height(16.dp))
+                AudioVisualizer(
+                    isRecording = speechRecognizer.isRecording.value,
+                    soundLevel = speechRecognizer.soundLevel.floatValue,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                // ----------------------
 
                 Crossfade(
                     targetState = speechRecognizer.recognizedText.value to speechRecognizer.partialText.value,
@@ -357,28 +453,56 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "對話紀錄",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
+            if (isSelectionMode) {
+                // --- SELECTION MODE HEADER ---
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = {
+                        isSelectionMode = false
+                        selectedIds.clear()
+                    }) {
+                        Icon(painterResource(android.R.drawable.ic_menu_close_clear_cancel), "Cancel")
+                    }
+                    Text(
+                        text = "已選擇 ${selectedIds.size} 筆",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
 
-            if (speechRecognizer.transcriptionHistory.value.isNotEmpty()) {
                 Button(
-                    onClick = { speechRecognizer.clearHistory() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        contentColor = Color.White
-                    ),
+                    onClick = { combineAndEvaluate() },
+                    enabled = selectedIds.isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    Icon(
-                        painter = painterResource(id = android.R.drawable.ic_menu_close_clear_cancel),
-                        contentDescription = "清除紀錄",
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
-                    Text(text = "清除", color = Color.White)
+                    Text("合併分析")
+                }
+            } else {
+                // --- NORMAL HEADER ---
+                Text(
+                    text = "對話紀錄",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+
+                if (speechRecognizer.transcriptionHistory.value.isNotEmpty()) {
+                    Button(
+                        onClick = { speechRecognizer.clearHistory() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            contentColor = Color.White
+                        ),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = android.R.drawable.ic_menu_close_clear_cancel),
+                            contentDescription = "清除紀錄",
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
+                        Text(text = "清除", color = Color.White)
+                    }
                 }
             }
         }
@@ -408,8 +532,25 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
                     items = speechRecognizer.transcriptionHistory.value,
                     key = { it.id }
                 ) { transcription ->
+                    val isSelected = transcription.id in selectedIds
+
                     TranscriptionItem(
                         transcription = transcription,
+                        isSelectionMode = isSelectionMode,
+                        isSelected = isSelected,
+                        onToggleSelection = {
+                            if (!isSelectionMode) {
+                                isSelectionMode = true
+                                selectedIds.add(transcription.id)
+                            } else {
+                                if (isSelected) {
+                                    selectedIds.remove(transcription.id)
+                                    if (selectedIds.isEmpty()) isSelectionMode = false
+                                } else {
+                                    selectedIds.add(transcription.id)
+                                }
+                            }
+                        },
                         onUpdate = { newText ->
                             speechRecognizer.updateTranscription(transcription.id, newText)
                             checkScamRisk(transcription.id, newText)
@@ -424,11 +565,13 @@ fun SpeechToTextScreen(modifier: Modifier = Modifier) {
         }
 
         // --- 5. RISK METER ---
-        Spacer(modifier = Modifier.height(12.dp))
-        RiskLevelMeter(
-            score = maxRiskScore,
-            highestRiskAdvice = maxRiskAdvice,
-            isLoading = isRiskLoading
-        )
+        if (speechRecognizer.transcriptionHistory.value.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            RiskLevelMeter(
+                score = maxRiskScore,
+                highestRiskAdvice = maxRiskAdvice,
+                isLoading = isRiskLoading
+            )
+        }
     }
 }

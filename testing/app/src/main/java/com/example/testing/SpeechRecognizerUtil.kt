@@ -2,11 +2,13 @@ package com.example.testing
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,7 +21,6 @@ data class Transcription(
     val text: String,
     val riskScore: Int? = null,
     val advice: String? = null,
-    // NEW: Loading state for UI
     val isAdviceLoading: Boolean = false
 )
 
@@ -32,6 +33,9 @@ class SpeechRecognizerUtil(private val context: Context) {
     // STATES
     val isRecording = mutableStateOf(false)
     private val isListeningInternal = mutableStateOf(false)
+
+    // NEW: Volume Level (0.0f to 1.0f) for the UI Animation
+    val soundLevel = mutableFloatStateOf(0f)
 
     val recognizedText = mutableStateOf("")
     val partialText = mutableStateOf("")
@@ -48,14 +52,25 @@ class SpeechRecognizerUtil(private val context: Context) {
             partialText.value = ""
         }
 
-        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onRmsChanged(rmsdB: Float) {
+            // NEW: Convert dB (-2 to 10) to a normalized 0.0 - 1.0 range for the UI
+            // rmsdB is usually between -2 (silence) and 10 (loud)
+            val minDb = -2f
+            val maxDb = 10f
+            val normalized = ((rmsdB - minDb) / (maxDb - minDb)).coerceIn(0f, 1f)
+            soundLevel.floatValue = normalized
+        }
+
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() {
             isListeningInternal.value = false
+            soundLevel.floatValue = 0f // Reset wave
         }
 
         override fun onError(error: Int) {
             isListeningInternal.value = false
+            soundLevel.floatValue = 0f
+
             val message = when (error) {
                 SpeechRecognizer.ERROR_AUDIO -> "Audio error"
                 SpeechRecognizer.ERROR_CLIENT -> "Client error"
@@ -132,13 +147,20 @@ class SpeechRecognizerUtil(private val context: Context) {
 
     private fun createIntent(): Intent {
         return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, currentLanguage.value)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 10000L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 10000L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
+
+            // Force unprocessed audio (fixes digital audio issues)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                putExtra("android.speech.extra.AUDIO_SOURCE", 9) // UNPROCESSED
+            } else {
+                putExtra("android.speech.extra.AUDIO_SOURCE", 6) // VOICE_RECOGNITION
+            }
         }
     }
 
@@ -176,6 +198,7 @@ class SpeechRecognizerUtil(private val context: Context) {
         isListeningInternal.value = false
         speechRecognizer?.stopListening()
         partialText.value = ""
+        soundLevel.floatValue = 0f
     }
 
     private fun restartRecognizer() {
@@ -220,14 +243,12 @@ class SpeechRecognizerUtil(private val context: Context) {
         }
     }
 
-    // NEW: Set loading state
     fun setAdviceLoading(id: String, isLoading: Boolean) {
         transcriptionHistory.value = transcriptionHistory.value.map {
             if (it.id == id) it.copy(isAdviceLoading = isLoading) else it
         }
     }
 
-    // UPDATE: Clear loading state when advice is set
     fun updateAdvice(id: String, advice: String) {
         transcriptionHistory.value = transcriptionHistory.value.map {
             if (it.id == id) it.copy(advice = advice, isAdviceLoading = false) else it
@@ -249,5 +270,16 @@ class SpeechRecognizerUtil(private val context: Context) {
 
     fun destroy() {
         speechRecognizer?.destroy()
+    }
+
+    fun addCombinedTranscription(text: String): String {
+        val newId = UUID.randomUUID().toString()
+        val newHistory = transcriptionHistory.value.toMutableList()
+        newHistory.add(0, Transcription(
+            id = newId,
+            text = text,
+        ))
+        transcriptionHistory.value = newHistory
+        return newId
     }
 }
