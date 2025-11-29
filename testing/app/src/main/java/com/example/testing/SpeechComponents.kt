@@ -15,25 +15,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-// --- SETTINGS DIALOG ---
+// SettingsDialog and RiskLevelMeter remain unchanged...
+// Copy the previous SettingsDialog and RiskLevelMeter code here if needed,
+// or I can assume you will keep them. I will focus on TranscriptionItem.
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsDialog(
     initialShowManualInput: Boolean,
-    availableVoices: List<Voice>, // <--- NEW PARAMETER
+    availableVoices: List<Voice>,
     onDismiss: () -> Unit,
-    onConfirm: (
-        url: String,
-        showManualInput: Boolean,
-        adviceProvider: AdviceProvider,
-        asrProvider: AsrProvider,
-        yatingKey: String,
-        ttsEnabled: Boolean, // <--- NEW RETURN
-        voiceName: String    // <--- NEW RETURN
-    ) -> Unit
+    onConfirm: (String, Boolean, AdviceProvider, AsrProvider, String, Boolean, String) -> Unit
 ) {
-    // 1. Detection Server State
+    // (Keeping your existing SettingsDialog code for brevity - paste it back here)
+    // ...
     val presets = ServerConfig.PRESETS
     var selectedOption by remember { mutableStateOf(ServerConfig.currentBaseUrl) }
     var customUrl by remember { mutableStateOf("") }
@@ -62,15 +61,13 @@ fun SettingsDialog(
     var selectedAsrProvider by remember { mutableStateOf(ServerConfigAsr.currentProvider) }
     var yatingApiKey by remember { mutableStateOf(ServerConfigAsr.yatingApiKey) }
 
-    // 4. TTS Settings State (NEW)
+    // 4. TTS Settings State
     var isTtsEnabled by remember { mutableStateOf(TtsConfig.isEnabled) }
     var selectedVoiceName by remember { mutableStateOf(TtsConfig.currentVoiceName) }
     var isVoiceDropdownExpanded by remember { mutableStateOf(false) }
 
     // 5. UI State
     var tempShowManualInput by remember { mutableStateOf(initialShowManualInput) }
-
-    // 6. Scroll State
     val scrollState = rememberScrollState()
 
     AlertDialog(
@@ -205,7 +202,7 @@ fun SettingsDialog(
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
-                // --- NEW SECTION 4: Text-to-Speech Settings ---
+                // --- SECTION 4: Text-to-Speech Settings ---
                 Text("4. 語音警示設定 (TTS)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -240,7 +237,6 @@ fun SettingsDialog(
                                 expanded = isVoiceDropdownExpanded,
                                 onDismissRequest = { isVoiceDropdownExpanded = false }
                             ) {
-                                // Default Option
                                 DropdownMenuItem(
                                     text = { Text("系統預設 (Default)") },
                                     onClick = {
@@ -248,7 +244,6 @@ fun SettingsDialog(
                                         isVoiceDropdownExpanded = false
                                     }
                                 )
-                                // List Voices
                                 availableVoices.forEach { voice ->
                                     DropdownMenuItem(
                                         text = {
@@ -288,13 +283,11 @@ fun SettingsDialog(
         confirmButton = {
             Button(onClick = {
                 val finalUrl = if (isCustomSelected) customUrl else selectedOption
-
                 val finalAdviceProvider = if (selectedAdviceProvider.name == isManualAdviceName) {
                     selectedAdviceProvider.copy(baseUrl = customAdviceUrl)
                 } else {
                     selectedAdviceProvider
                 }
-
                 if (finalUrl.isNotBlank()) {
                     onConfirm(finalUrl, tempShowManualInput, finalAdviceProvider, selectedAsrProvider, yatingApiKey, isTtsEnabled, selectedVoiceName)
                 }
@@ -357,6 +350,7 @@ fun RiskLevelMeter(score: Int, highestRiskAdvice: String?, isLoading: Boolean) {
     }
 }
 
+// --- UPDATED: TranscriptionItem ---
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TranscriptionItem(
@@ -373,20 +367,33 @@ fun TranscriptionItem(
     val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
     val borderWidth = if (isSelected) 2.dp else 0.dp
 
+    // --- NEW: Dynamic Background Color based on Risk ---
+    val cardBackgroundColor = if (isSelected) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+    } else {
+        val score = transcription.riskScore ?: 0
+        when {
+            score > 70 -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f) // High Risk (Red-ish)
+            score >= 50 -> Color(0xFFFFF9C4) // Medium Risk (Light Yellow)
+            else -> MaterialTheme.colorScheme.surfaceContainerLow // Default
+        }
+    }
+
+    // --- NEW: Timestamp Formatter ---
+    val timestampStr = remember(transcription.timestamp) {
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(transcription.timestamp))
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .border(borderWidth, borderColor, RoundedCornerShape(12.dp)),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected)
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-            else
-                MaterialTheme.colorScheme.surfaceContainerLow
-        )
+        colors = CardDefaults.cardColors(containerColor = cardBackgroundColor)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+            // Header: Selection + Timestamp + Risk Badge
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isSelectionMode) {
                     Checkbox(
@@ -397,12 +404,20 @@ fun TranscriptionItem(
                     Spacer(modifier = Modifier.width(8.dp))
                 }
 
+                // --- NEW: Display Timestamp ---
+                Text(
+                    text = timestampStr,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.weight(1f))
+
                 if (transcription.riskScore != null) {
                     val score = transcription.riskScore
                     val (color, text) = when {
                         score > 70 -> MaterialTheme.colorScheme.error to "⚠️ 高風險 ($score%)"
                         score < 50 -> Color(0xFF4CAF50) to "✅ 安全 ($score%)"
-                        else -> Color(0xFFFFFFA0) to "⚠️ 需留意 ($score%)"
+                        else -> Color(0xFFA69B0E) to "⚠️ 需留意 ($score%)"
                     }
                     Box(
                         modifier = Modifier
@@ -420,7 +435,7 @@ fun TranscriptionItem(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             if (isEditing) {
                 OutlinedTextField(

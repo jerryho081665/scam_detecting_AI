@@ -22,6 +22,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -50,30 +51,23 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private var tts: TextToSpeech? = null
-    // New state to hold available voices
     private val availableVoices = mutableStateListOf<Voice>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 1. Initialize TextToSpeech
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                // Try Taiwan Chinese first
                 val result = tts?.setLanguage(Locale.TAIWAN)
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                     tts?.setLanguage(Locale.CHINESE)
                 }
-
-                // --- UPDATED: Load Voices & Filter for Taiwan ONLY ---
                 try {
                     val voices = tts?.voices
                     if (!voices.isNullOrEmpty()) {
-                        // Filter for voices where country is "TW" or language tag contains "TW"
                         val taiwanVoices = voices.filter {
                             it.locale.country == "TW" || it.locale.toString().contains("TW")
                         }.sortedBy { it.name }
-
                         availableVoices.clear()
                         availableVoices.addAll(taiwanVoices)
                     }
@@ -113,13 +107,19 @@ fun SpeechToTextScreen(
 ) {
     val context = LocalContext.current
     val recordAudioPermission = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
-    val speechRecognizer = remember { SpeechRecognizerUtil(context) }
+
+    // --- UPDATED: Initialize DB and Pass DAO ---
+    val db = remember { AppDatabase.getDatabase(context) }
+    val speechRecognizer = remember { SpeechRecognizerUtil(context, db.transcriptionDao()) }
+
     val keyboardController = LocalSoftwareKeyboardController.current
 
     val scope = rememberCoroutineScope()
     var manualInputText by remember { mutableStateOf("") }
 
-    // --- VIBRATION SETUP ---
+    // --- UPDATED: LazyListState for Auto-Scroll ---
+    val listState = rememberLazyListState()
+
     val vibrator = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
@@ -132,7 +132,6 @@ fun SpeechToTextScreen(
 
     // --- SETTINGS STATE ---
     var showSettingsDialog by remember { mutableStateOf(false) }
-    // UPDATED: Manual Input defaults to FALSE (closed)
     var showManualInput by remember { mutableStateOf(false) }
 
     // --- SELECTION & COMBINE STATE ---
@@ -152,16 +151,19 @@ fun SpeechToTextScreen(
     val maxRiskAdvice = highestRiskItem?.advice
     val isRiskLoading = highestRiskItem?.isAdviceLoading ?: false
 
-    // --- ALERT SYSTEM (TTS + Vibration) ---
-    // This watches for new high-risk items and triggers the physical warnings
+    // --- AUTO-SCROLL LOGIC ---
+    // When history size changes, scroll to top (index 0) if recording or user is near top
+    LaunchedEffect(speechRecognizer.transcriptionHistory.value.size) {
+        if (speechRecognizer.transcriptionHistory.value.isNotEmpty()) {
+            listState.animateScrollToItem(0)
+        }
+    }
+
+    // --- ALERT SYSTEM ---
     LaunchedEffect(highestRiskItem) {
         val item = highestRiskItem
-        // Threshold: 70%
         if (item != null && item.riskScore != null && item.riskScore > 70) {
-            // Only alert if we have advice and it hasn't been "handled" (simple check for now)
             if (!item.advice.isNullOrBlank() && !item.isAdviceLoading) {
-
-                // 1. Vibrate (Heavy pattern) - Always happens on High Risk
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500), -1))
                 } else {
@@ -169,16 +171,13 @@ fun SpeechToTextScreen(
                     vibrator.vibrate(500)
                 }
 
-                // 2. Speak (Conditioned on settings)
                 if (TtsConfig.isEnabled) {
-                    // Update Voice if specific one selected
                     if (TtsConfig.currentVoiceName.isNotBlank()) {
                         val voice = availableVoices.find { it.name == TtsConfig.currentVoiceName }
                         if (voice != null) {
                             tts?.voice = voice
                         }
                     }
-
                     tts?.speak(
                         "注意！偵測到高風險詐騙內容。AI建議：${item.advice}",
                         TextToSpeech.QUEUE_FLUSH,
@@ -206,12 +205,8 @@ fun SpeechToTextScreen(
 
                     try {
                         val provider = ServerConfigAdvice.currentProvider
-
-                        // 1. Construct Endpoint
                         val endpoint = if (provider.baseUrl.endsWith("/")) "chat/completions" else "/chat/completions"
                         var fullUrl = provider.baseUrl + endpoint
-
-                        // 2. Auth Method
                         val authHeader: String?
                         if (provider.useAuthHeader) {
                             authHeader = "Bearer ${provider.apiKey}"
@@ -220,14 +215,12 @@ fun SpeechToTextScreen(
                             authHeader = null
                         }
 
-                        // 3. Make Request
                         val adviceResponse = RetrofitClientSlow.instance.getAdvice(
                             url = fullUrl,
                             auth = authHeader,
                             request = RetrofitClientSlow.convert(request)
                         )
 
-                        // 4. Extract and Clean Text
                         var adviceText = adviceResponse.choices.firstOrNull()?.message?.content
                             ?: "無法取得建議"
                         adviceText = adviceText.replace(Regex("<think>.*?</think>", RegexOption.DOT_MATCHES_ALL), "").trim()
@@ -245,7 +238,6 @@ fun SpeechToTextScreen(
         }
     }
 
-    // --- COMBINE LOGIC ---
     fun combineAndEvaluate() {
         val allItems = speechRecognizer.transcriptionHistory.value
         val selectedItems = allItems.filter { it.id in selectedIds }
@@ -267,6 +259,9 @@ fun SpeechToTextScreen(
         val history = speechRecognizer.transcriptionHistory.value
         if (history.isNotEmpty()) {
             val latestItem = history.first()
+            // We only check if it was just added (timestamp is very recent) or if risk is null
+            // Since we load from DB now, we don't want to re-check old items every time app opens.
+            // Simple check: Only check if risk is null.
             if (latestItem.riskScore == null && latestItem.text.isNotBlank()) {
                 checkScamRisk(latestItem.id, latestItem.text)
             }
@@ -289,11 +284,8 @@ fun SpeechToTextScreen(
             onDismiss = { showSettingsDialog = false },
             onConfirm = { newUrl, newShowManualInput, newAdviceProvider, newAsrProvider, newYatingKey, newTtsEnabled, newVoiceName ->
                 RetrofitClientSlow.updateSettings(newUrl, newAdviceProvider, newAsrProvider, newYatingKey)
-
-                // Update TTS Settings
                 TtsConfig.isEnabled = newTtsEnabled
                 TtsConfig.currentVoiceName = newVoiceName
-
                 showManualInput = newShowManualInput
                 showSettingsDialog = false
             }
@@ -305,7 +297,7 @@ fun SpeechToTextScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // --- 1. SPEECH AREA ---
+        // ... (SPEECH AREA - Box/Visualizer logic remains same) ...
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -317,33 +309,20 @@ fun SpeechToTextScreen(
                 onClick = { showSettingsDialog = true },
                 modifier = Modifier.align(Alignment.TopStart)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Settings",
-                    tint = MaterialTheme.colorScheme.primary
-                )
+                Icon(Icons.Default.Settings, "Settings", tint = MaterialTheme.colorScheme.primary)
             }
 
             Button(
                 onClick = { speechRecognizer.toggleLanguage() },
                 modifier = Modifier.align(Alignment.TopEnd),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                ),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             ) {
                 Text(text = languageButtonText, color = Color.White)
             }
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = "即時語音轉錄",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    textAlign = TextAlign.Center
-                )
-
-                // --- VISUALIZER ---
+                Text("即時語音轉錄", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)
                 Spacer(modifier = Modifier.height(16.dp))
                 AudioVisualizer(
                     isRecording = speechRecognizer.isRecording.value,
@@ -351,42 +330,18 @@ fun SpeechToTextScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-                // ------------------
                 speechRecognizer.errorState.value?.let { error ->
-                    Text(
-                        text = error,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
+                    Text(text = error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 8.dp))
                 }
-                Crossfade(
-                    targetState = speechRecognizer.recognizedText.value to speechRecognizer.partialText.value,
-                    label = "speech-text"
-                ) { (recognized, partial) ->
+                Crossfade(targetState = speechRecognizer.recognizedText.value to speechRecognizer.partialText.value, label = "speech-text") { (recognized, partial) ->
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         if (recognized.isNotEmpty()) {
-                            Text(
-                                text = recognized,
-                                fontSize = 20.sp,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                            Text(text = recognized, fontSize = 20.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                         }
-
                         if (speechRecognizer.isRecording.value && partial.isNotEmpty()) {
-                            if (recognized.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                            }
-                            Text(
-                                text = partial,
-                                fontSize = 18.sp,
-                                color = Color.Gray,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                            if (recognized.isNotEmpty()) Spacer(modifier = Modifier.height(8.dp))
+                            Text(text = partial, fontSize = 18.sp, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                         }
-
                         if (recognized.isEmpty() && partial.isEmpty()) {
                             Text(
                                 text = if (speechRecognizer.isRecording.value) "聆聽中..." else "點擊錄音按鈕開始說話...",
@@ -398,43 +353,24 @@ fun SpeechToTextScreen(
                         }
                     }
                 }
-
                 Spacer(modifier = Modifier.height(16.dp))
-
                 Button(
                     onClick = {
                         if (recordAudioPermission.status.isGranted) {
-                            if (speechRecognizer.isRecording.value) {
-                                speechRecognizer.stopRecording()
-                            } else {
-                                speechRecognizer.startRecording()
-                            }
+                            if (speechRecognizer.isRecording.value) speechRecognizer.stopRecording() else speechRecognizer.startRecording()
                         } else {
                             recordAudioPermission.launchPermissionRequest()
                         }
                     },
                     modifier = Modifier.size(80.dp),
                     shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (speechRecognizer.isRecording.value)
-                            MaterialTheme.colorScheme.errorContainer
-                        else
-                            MaterialTheme.colorScheme.primaryContainer
-                    )
+                    colors = ButtonDefaults.buttonColors(containerColor = if (speechRecognizer.isRecording.value) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer)
                 ) {
                     Icon(
-                        painter = painterResource(
-                            id = if (speechRecognizer.isRecording.value)
-                                android.R.drawable.ic_media_pause
-                            else
-                                android.R.drawable.ic_btn_speak_now
-                        ),
+                        painter = painterResource(id = if (speechRecognizer.isRecording.value) android.R.drawable.ic_media_pause else android.R.drawable.ic_btn_speak_now),
                         contentDescription = if (speechRecognizer.isRecording.value) "停止" else "錄音",
                         modifier = Modifier.size(40.dp),
-                        tint = if (speechRecognizer.isRecording.value)
-                            MaterialTheme.colorScheme.error
-                        else
-                            MaterialTheme.colorScheme.primary
+                        tint = if (speechRecognizer.isRecording.value) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                     )
                 }
             }
@@ -448,10 +384,7 @@ fun SpeechToTextScreen(
         ) {
             Column {
                 Spacer(modifier = Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = manualInputText,
                         onValueChange = { manualInputText = it },
@@ -459,15 +392,13 @@ fun SpeechToTextScreen(
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(
-                            onSend = {
-                                if (manualInputText.isNotBlank()) {
-                                    speechRecognizer.addManualTranscription(manualInputText)
-                                    manualInputText = ""
-                                    keyboardController?.hide()
-                                }
+                        keyboardActions = KeyboardActions(onSend = {
+                            if (manualInputText.isNotBlank()) {
+                                speechRecognizer.addManualTranscription(manualInputText)
+                                manualInputText = ""
+                                keyboardController?.hide()
                             }
-                        )
+                        })
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
@@ -481,10 +412,7 @@ fun SpeechToTextScreen(
                         modifier = Modifier.height(56.dp),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Icon(
-                            painter = painterResource(id = android.R.drawable.ic_menu_send),
-                            contentDescription = "Send"
-                        )
+                        Icon(painter = painterResource(id = android.R.drawable.ic_menu_send), contentDescription = "Send")
                     }
                 }
             }
@@ -499,52 +427,27 @@ fun SpeechToTextScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (isSelectionMode) {
-                // --- SELECTION MODE HEADER ---
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = {
-                        isSelectionMode = false
-                        selectedIds.clear()
-                    }) {
+                    IconButton(onClick = { isSelectionMode = false; selectedIds.clear() }) {
                         Icon(painterResource(android.R.drawable.ic_menu_close_clear_cancel), "Cancel")
                     }
-                    Text(
-                        text = "已選擇 ${selectedIds.size} 筆",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text(text = "已選擇 ${selectedIds.size} 筆", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 }
-
                 Button(
                     onClick = { combineAndEvaluate() },
                     enabled = selectedIds.isNotEmpty(),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Text("合併分析")
-                }
+                ) { Text("合併分析") }
             } else {
-                // --- NORMAL HEADER ---
-                Text(
-                    text = "對話紀錄",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-
+                Text(text = "對話紀錄", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 if (speechRecognizer.transcriptionHistory.value.isNotEmpty()) {
                     Button(
                         onClick = { speechRecognizer.clearHistory() },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            contentColor = Color.White
-                        ),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = Color.White),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
-                        Icon(
-                            painter = painterResource(id = android.R.drawable.ic_menu_close_clear_cancel),
-                            contentDescription = "清除紀錄",
-                            modifier = Modifier.size(20.dp)
-                        )
+                        Icon(painter = painterResource(id = android.R.drawable.ic_menu_close_clear_cancel), contentDescription = "清除紀錄", modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
                         Text(text = "清除", color = Color.White)
                     }
@@ -554,31 +457,22 @@ fun SpeechToTextScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // --- 4. HISTORY LIST ---
+        // --- 4. HISTORY LIST (With Auto-Scroll State) ---
         if (speechRecognizer.transcriptionHistory.value.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "尚無紀錄",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                )
+            Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Text(text = "尚無紀錄", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
             }
         } else {
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                state = listState, // Pass the state
+                reverseLayout = false // We already ordered by DESC in DAO, so index 0 is newest
             ) {
                 items(
                     items = speechRecognizer.transcriptionHistory.value,
                     key = { it.id }
                 ) { transcription ->
                     val isSelected = transcription.id in selectedIds
-
                     TranscriptionItem(
                         transcription = transcription,
                         isSelectionMode = isSelectionMode,
@@ -600,9 +494,7 @@ fun SpeechToTextScreen(
                             speechRecognizer.updateTranscription(transcription.id, newText)
                             checkScamRisk(transcription.id, newText)
                         },
-                        onDelete = {
-                            speechRecognizer.deleteTranscription(transcription.id)
-                        }
+                        onDelete = { speechRecognizer.deleteTranscription(transcription.id) }
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                 }
@@ -612,11 +504,7 @@ fun SpeechToTextScreen(
         // --- 5. RISK METER ---
         if (speechRecognizer.transcriptionHistory.value.isNotEmpty()) {
             Spacer(modifier = Modifier.height(12.dp))
-            RiskLevelMeter(
-                score = maxRiskScore,
-                highestRiskAdvice = maxRiskAdvice,
-                isLoading = isRiskLoading
-            )
+            RiskLevelMeter(score = maxRiskScore, highestRiskAdvice = maxRiskAdvice, isLoading = isRiskLoading)
         }
     }
 }

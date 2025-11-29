@@ -18,6 +18,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.MediaType
@@ -33,15 +35,10 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.math.sqrt
 
-data class Transcription(
-    val id: String = UUID.randomUUID().toString(),
-    val text: String,
-    val riskScore: Int? = null,
-    val advice: String? = null,
-    val isAdviceLoading: Boolean = false
-)
+// Note: Transcription data class is imported from Database.kt
 
-class SpeechRecognizerUtil(private val context: Context) {
+class SpeechRecognizerUtil(private val context: Context, private val dao: TranscriptionDao) {
+
     // --- GOOGLE NATIVE COMPONENTS ---
     private var speechRecognizer: SpeechRecognizer? = SpeechRecognizer.createSpeechRecognizer(context)
 
@@ -54,7 +51,7 @@ class SpeechRecognizerUtil(private val context: Context) {
     private var audioRecord: AudioRecord? = null
     private var recordingJob: Job? = null
 
-    // Audio Configuration for Yating (16kHz, Mono, PCM 16bit)
+    // Audio Configuration
     private val SAMPLE_RATE = 16000
     private val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
     private val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
@@ -71,10 +68,15 @@ class SpeechRecognizerUtil(private val context: Context) {
     val recognizedText = mutableStateOf("")
     val partialText = mutableStateOf("")
     val errorState = mutableStateOf<String?>(null)
+
+    // DB History State
     val transcriptionHistory = mutableStateOf<List<Transcription>>(emptyList())
 
+    // Scope for DB operations
+    private val scope = CoroutineScope(Dispatchers.Main)
+
     // =========================================================================
-    // 1. GOOGLE RECOGNIZER IMPLEMENTATION
+    // 1. GOOGLE RECOGNIZER LISTENER (Moved UP before init)
     // =========================================================================
     private val googleRecognitionListener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
@@ -97,7 +99,6 @@ class SpeechRecognizerUtil(private val context: Context) {
         }
         override fun onError(error: Int) {
             if (ServerConfigAsr.currentProvider.id != "google") return
-
             isListeningInternal.value = false
             soundLevel.floatValue = 0f
 
@@ -106,8 +107,6 @@ class SpeechRecognizerUtil(private val context: Context) {
                 SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Timeout"
                 else -> "Error: $error"
             }
-            Log.e("SpeechRecognizer", "Google Error: $message")
-
             if (isRecording.value) {
                 when (error) {
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
@@ -138,12 +137,20 @@ class SpeechRecognizerUtil(private val context: Context) {
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
+    // =========================================================================
+    // 2. INIT BLOCK (Now safe to use listener)
+    // =========================================================================
     init {
         speechRecognizer?.setRecognitionListener(googleRecognitionListener)
+
+        // Observe Database Changes
+        dao.getAllHistory().onEach { list ->
+            transcriptionHistory.value = list
+        }.launchIn(scope)
     }
 
     // =========================================================================
-    // 2. YATING IMPLEMENTATION (WebSocket + AudioRecord)
+    // 3. YATING IMPLEMENTATION
     // =========================================================================
 
     private fun startYatingListening() {
@@ -203,7 +210,6 @@ class SpeechRecognizerUtil(private val context: Context) {
 
             val response = client.newCall(request).execute()
 
-            // --- FIXED: Use method calls instead of property access ---
             if (!response.isSuccessful) {
                 Log.e("Yating", "Token Fail: ${response.code()} ${response.body()?.string()}")
                 return null
@@ -263,17 +269,13 @@ class SpeechRecognizerUtil(private val context: Context) {
                 }
 
                 override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                    Log.d("Yating", "Closing: $code / $reason")
                     CoroutineScope(Dispatchers.Main).launch {
-                        if (code != 1000) {
-                            errorState.value = "連線關閉: $reason"
-                        }
+                        if (code != 1000) errorState.value = "連線關閉: $reason"
                         stopRecording()
                     }
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    Log.e("Yating", "Failure: ${t.message}")
                     CoroutineScope(Dispatchers.Main).launch {
                         errorState.value = "連線失敗: ${t.localizedMessage}"
                         stopRecording()
@@ -281,7 +283,6 @@ class SpeechRecognizerUtil(private val context: Context) {
                 }
             })
         } catch (e: Exception) {
-            Log.e("Yating", "WS Init Error: ${e.message}")
             CoroutineScope(Dispatchers.Main).launch {
                 errorState.value = "WS Error: ${e.message}"
                 isRecording.value = false
@@ -293,7 +294,6 @@ class SpeechRecognizerUtil(private val context: Context) {
     private fun startStreamingAudio(ws: WebSocket) {
         recordingJob = CoroutineScope(Dispatchers.IO).launch {
             try {
-                Log.d("Yating", "Starting AudioRecord...")
                 audioRecord = AudioRecord(
                     MediaRecorder.AudioSource.MIC,
                     SAMPLE_RATE,
@@ -303,7 +303,6 @@ class SpeechRecognizerUtil(private val context: Context) {
                 )
 
                 if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                    Log.e("Yating", "AudioRecord init failed")
                     CoroutineScope(Dispatchers.Main).launch {
                         errorState.value = "麥克風初始化失敗"
                         stopRecording()
@@ -312,9 +311,7 @@ class SpeechRecognizerUtil(private val context: Context) {
                 }
 
                 audioRecord?.startRecording()
-                Log.d("Yating", "AudioRecord started successfully")
                 isListeningInternal.value = true
-
                 val buffer = ByteArray(BUFFER_SIZE)
 
                 while (isActive && isRecording.value) {
@@ -322,8 +319,7 @@ class SpeechRecognizerUtil(private val context: Context) {
                     if (read > 0) {
                         val byteString = ByteString.of(buffer, 0, read)
                         ws.send(byteString)
-
-                        // Calculate Volume for UI
+                        // Simple volume calc
                         var sum = 0.0
                         for (i in 0 until read step 2) {
                             val sample = (buffer[i].toInt() and 0xFF) or (buffer[i+1].toInt() shl 8)
@@ -336,7 +332,6 @@ class SpeechRecognizerUtil(private val context: Context) {
                     }
                 }
             } catch (e: Exception) {
-                Log.e("Yating", "Streaming Error: ${e.message}")
                 CoroutineScope(Dispatchers.Main).launch {
                     errorState.value = "錄音錯誤: ${e.message}"
                     stopRecording()
@@ -359,24 +354,22 @@ class SpeechRecognizerUtil(private val context: Context) {
             }
             audioRecord?.release()
             audioRecord = null
-
             webSocket?.close(1000, "User stopped")
             webSocket = null
-        } catch (e: Exception) {
-            Log.e("Yating", "Stop Error: ${e.message}")
-        }
+        } catch (e: Exception) {}
         isListeningInternal.value = false
     }
 
     // =========================================================================
-    // 3. SHARED LOGIC & CONTROLS
+    // 4. SHARED LOGIC & DB INTEGRATION
     // =========================================================================
 
     private fun handleFinalResult(text: String) {
         if (text.isNotBlank()) {
-            val newHistory = transcriptionHistory.value.toMutableList()
-            newHistory.add(0, Transcription(text = text))
-            transcriptionHistory.value = newHistory
+            // NEW: Insert into DB instead of local list
+            scope.launch(Dispatchers.IO) {
+                dao.insert(Transcription(text = text))
+            }
             recognizedText.value = ""
             partialText.value = ""
         }
@@ -391,13 +384,7 @@ class SpeechRecognizerUtil(private val context: Context) {
 
     private fun startListening() {
         val provider = ServerConfigAsr.currentProvider
-        Log.d("SpeechRecognizer", "Starting with provider: ${provider.name}")
-
-        if (provider.id == "yating") {
-            startYatingListening()
-        } else {
-            startGoogleListening()
-        }
+        if (provider.id == "yating") startYatingListening() else startGoogleListening()
     }
 
     private fun restartListening() {
@@ -409,7 +396,6 @@ class SpeechRecognizerUtil(private val context: Context) {
         isRecording.value = false
         soundLevel.floatValue = 0f
         partialText.value = ""
-
         speechRecognizer?.stopListening()
         stopYatingListening()
     }
@@ -430,14 +416,8 @@ class SpeechRecognizerUtil(private val context: Context) {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, currentLanguage.value)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 10000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 10000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                putExtra("android.speech.extra.AUDIO_SOURCE", 9) // UNPROCESSED
-            } else {
-                putExtra("android.speech.extra.AUDIO_SOURCE", 6)
+                putExtra("android.speech.extra.AUDIO_SOURCE", 9)
             }
         }
     }
@@ -454,72 +434,64 @@ class SpeechRecognizerUtil(private val context: Context) {
     fun toggleLanguage() {
         val wasRecording = isRecording.value
         if (wasRecording) stopRecording()
-
-        currentLanguage.value = when (currentLanguage.value) {
-            "zh-TW" -> "en-US"
-            else -> "zh-TW"
-        }
-
-        if (wasRecording) {
-            startRecording()
-        }
+        currentLanguage.value = if (currentLanguage.value == "zh-TW") "en-US" else "zh-TW"
+        if (wasRecording) startRecording()
     }
 
-    // --- History Helper Functions ---
+    // --- History Helper Functions (Updated for DB) ---
     fun addManualTranscription(text: String) {
         if (text.isBlank()) return
-        val newHistory = transcriptionHistory.value.toMutableList()
-        newHistory.add(0, Transcription(text = text))
-        transcriptionHistory.value = newHistory
+        scope.launch(Dispatchers.IO) {
+            dao.insert(Transcription(text = text))
+        }
     }
 
     fun updateTranscription(id: String, newText: String) {
-        transcriptionHistory.value = transcriptionHistory.value.map {
-            if (it.id == id) it.copy(text = newText) else it
+        scope.launch(Dispatchers.IO) {
+            dao.updateText(id, newText)
         }
     }
 
     fun updateRisk(id: String, score: Int, advice: String?) {
-        transcriptionHistory.value = transcriptionHistory.value.map {
-            if (it.id == id) it.copy(riskScore = score, advice = advice) else it
+        scope.launch(Dispatchers.IO) {
+            dao.updateRisk(id, score, advice)
         }
     }
 
     fun setAdviceLoading(id: String, isLoading: Boolean) {
-        transcriptionHistory.value = transcriptionHistory.value.map {
-            if (it.id == id) it.copy(isAdviceLoading = isLoading) else it
+        scope.launch(Dispatchers.IO) {
+            dao.updateLoading(id, isLoading)
         }
     }
 
     fun updateAdvice(id: String, advice: String) {
-        transcriptionHistory.value = transcriptionHistory.value.map {
-            if (it.id == id) it.copy(advice = advice, isAdviceLoading = false) else it
+        scope.launch(Dispatchers.IO) {
+            dao.updateAdvice(id, advice)
         }
     }
 
     fun deleteTranscription(id: String) {
-        transcriptionHistory.value = transcriptionHistory.value.filter { it.id != id }
+        scope.launch(Dispatchers.IO) {
+            dao.delete(id)
+        }
     }
 
     fun clearHistory() {
-        transcriptionHistory.value = emptyList()
+        scope.launch(Dispatchers.IO) {
+            dao.deleteAll()
+        }
     }
 
-    fun clearCurrentTranscript() {
-        recognizedText.value = ""
-        partialText.value = ""
+    fun addCombinedTranscription(text: String): String {
+        val newId = UUID.randomUUID().toString()
+        scope.launch(Dispatchers.IO) {
+            dao.insert(Transcription(id = newId, text = text))
+        }
+        return newId
     }
 
     fun destroy() {
         speechRecognizer?.destroy()
         stopYatingListening()
-    }
-
-    fun addCombinedTranscription(text: String): String {
-        val newId = UUID.randomUUID().toString()
-        val newHistory = transcriptionHistory.value.toMutableList()
-        newHistory.add(0, Transcription(id = newId, text = text))
-        transcriptionHistory.value = newHistory
-        return newId
     }
 }
