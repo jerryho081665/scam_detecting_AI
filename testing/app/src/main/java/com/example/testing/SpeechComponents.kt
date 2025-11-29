@@ -1,16 +1,11 @@
 package com.example.testing
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.border
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.ui.unit.dp
+import android.speech.tts.Voice
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,11 +17,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 // --- SETTINGS DIALOG ---
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsDialog(
     initialShowManualInput: Boolean,
+    availableVoices: List<Voice>, // <--- NEW PARAMETER
     onDismiss: () -> Unit,
-    onConfirm: (url: String, showManualInput: Boolean, adviceProvider: AdviceProvider) -> Unit
+    onConfirm: (
+        url: String,
+        showManualInput: Boolean,
+        adviceProvider: AdviceProvider,
+        asrProvider: AsrProvider,
+        yatingKey: String,
+        ttsEnabled: Boolean, // <--- NEW RETURN
+        voiceName: String    // <--- NEW RETURN
+    ) -> Unit
 ) {
     // 1. Detection Server State
     val presets = ServerConfig.PRESETS
@@ -43,7 +48,6 @@ fun SettingsDialog(
     val adviceProviders = ServerConfigAdvice.PROVIDERS
     var selectedAdviceProvider by remember { mutableStateOf(ServerConfigAdvice.currentProvider) }
 
-    // Logic for Manual Advice Input
     val isManualAdviceName = ServerConfigAdvice.MANUAL_PROVIDER_NAME
     var customAdviceUrl by remember { mutableStateOf("") }
 
@@ -53,17 +57,26 @@ fun SettingsDialog(
         }
     }
 
-    // 3. UI State
+    // 3. ASR Provider State
+    val asrProviders = ServerConfigAsr.PROVIDERS
+    var selectedAsrProvider by remember { mutableStateOf(ServerConfigAsr.currentProvider) }
+    var yatingApiKey by remember { mutableStateOf(ServerConfigAsr.yatingApiKey) }
+
+    // 4. TTS Settings State (NEW)
+    var isTtsEnabled by remember { mutableStateOf(TtsConfig.isEnabled) }
+    var selectedVoiceName by remember { mutableStateOf(TtsConfig.currentVoiceName) }
+    var isVoiceDropdownExpanded by remember { mutableStateOf(false) }
+
+    // 5. UI State
     var tempShowManualInput by remember { mutableStateOf(initialShowManualInput) }
 
-    // 4. Scroll State
+    // 6. Scroll State
     val scrollState = rememberScrollState()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("應用程式設定") },
         text = {
-            // UPDATED: Added verticalScroll to the Column
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -155,8 +168,110 @@ fun SettingsDialog(
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
-                // --- SECTION 3: UI Settings ---
-                Text("3. 顯示設定", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                // --- SECTION 3: ASR Source ---
+                Text("3. 語音辨識來源 (ASR)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                asrProviders.forEach { provider ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedAsrProvider = provider }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        RadioButton(
+                            selected = (selectedAsrProvider.id == provider.id),
+                            onClick = { selectedAsrProvider = provider }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(text = provider.name, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+
+                // Show API Key field only if Yating is selected
+                if (selectedAsrProvider.id == "yating") {
+                    OutlinedTextField(
+                        value = yatingApiKey,
+                        onValueChange = { yatingApiKey = it },
+                        label = { Text("Yating API Key") },
+                        placeholder = { Text("Enter your API Key") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 32.dp, bottom = 8.dp),
+                        singleLine = true
+                    )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                // --- NEW SECTION 4: Text-to-Speech Settings ---
+                Text("4. 語音警示設定 (TTS)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("啟用語音朗讀")
+                    Switch(checked = isTtsEnabled, onCheckedChange = { isTtsEnabled = it })
+                }
+
+                AnimatedVisibility(visible = isTtsEnabled) {
+                    Column(modifier = Modifier.padding(top = 8.dp)) {
+                        ExposedDropdownMenuBox(
+                            expanded = isVoiceDropdownExpanded,
+                            onExpandedChange = { isVoiceDropdownExpanded = !isVoiceDropdownExpanded }
+                        ) {
+                            val currentVoiceObj = availableVoices.find { it.name == selectedVoiceName }
+                            val displayText = currentVoiceObj?.let { "${it.locale.displayCountry} - ${it.name}" } ?: "系統預設 (Default)"
+
+                            OutlinedTextField(
+                                value = displayText,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("選擇語音 (Voice)") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isVoiceDropdownExpanded) },
+                                modifier = Modifier.menuAnchor().fillMaxWidth()
+                            )
+
+                            ExposedDropdownMenu(
+                                expanded = isVoiceDropdownExpanded,
+                                onDismissRequest = { isVoiceDropdownExpanded = false }
+                            ) {
+                                // Default Option
+                                DropdownMenuItem(
+                                    text = { Text("系統預設 (Default)") },
+                                    onClick = {
+                                        selectedVoiceName = ""
+                                        isVoiceDropdownExpanded = false
+                                    }
+                                )
+                                // List Voices
+                                availableVoices.forEach { voice ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Column {
+                                                Text(voice.locale.displayCountry.ifBlank { "Unknown Region" }, fontWeight = FontWeight.Bold)
+                                                Text(voice.name, style = MaterialTheme.typography.bodySmall)
+                                            }
+                                        },
+                                        onClick = {
+                                            selectedVoiceName = voice.name
+                                            isVoiceDropdownExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                // --- SECTION 5: UI Settings ---
+                Text("5. 顯示設定", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -181,7 +296,7 @@ fun SettingsDialog(
                 }
 
                 if (finalUrl.isNotBlank()) {
-                    onConfirm(finalUrl, tempShowManualInput, finalAdviceProvider)
+                    onConfirm(finalUrl, tempShowManualInput, finalAdviceProvider, selectedAsrProvider, yatingApiKey, isTtsEnabled, selectedVoiceName)
                 }
             }) { Text("確定") }
         },
@@ -191,7 +306,6 @@ fun SettingsDialog(
     )
 }
 
-// RiskLevelMeter and TranscriptionItem remain unchanged
 @Composable
 fun RiskLevelMeter(score: Int, highestRiskAdvice: String?, isLoading: Boolean) {
     val animatedProgress by animateFloatAsState(targetValue = score / 100f, label = "riskProgress")
@@ -242,6 +356,7 @@ fun RiskLevelMeter(score: Int, highestRiskAdvice: String?, isLoading: Boolean) {
         }
     }
 }
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TranscriptionItem(

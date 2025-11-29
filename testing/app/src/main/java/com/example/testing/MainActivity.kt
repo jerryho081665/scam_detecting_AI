@@ -8,6 +8,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -49,6 +50,8 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private var tts: TextToSpeech? = null
+    // New state to hold available voices
+    private val availableVoices = mutableStateListOf<Voice>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,10 +59,26 @@ class MainActivity : ComponentActivity() {
         // 1. Initialize TextToSpeech
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                // Try Taiwan Chinese first, fallback to generic Chinese
+                // Try Taiwan Chinese first
                 val result = tts?.setLanguage(Locale.TAIWAN)
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                     tts?.setLanguage(Locale.CHINESE)
+                }
+
+                // --- UPDATED: Load Voices & Filter for Taiwan ONLY ---
+                try {
+                    val voices = tts?.voices
+                    if (!voices.isNullOrEmpty()) {
+                        // Filter for voices where country is "TW" or language tag contains "TW"
+                        val taiwanVoices = voices.filter {
+                            it.locale.country == "TW" || it.locale.toString().contains("TW")
+                        }.sortedBy { it.name }
+
+                        availableVoices.clear()
+                        availableVoices.addAll(taiwanVoices)
+                    }
+                } catch (e: Exception) {
+                    Log.e("TTS", "Error fetching voices: ${e.message}")
                 }
             }
         }
@@ -70,7 +89,8 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     SpeechToTextScreen(
                         modifier = Modifier.padding(innerPadding),
-                        tts = tts
+                        tts = tts,
+                        availableVoices = availableVoices
                     )
                 }
             }
@@ -88,7 +108,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SpeechToTextScreen(
     modifier: Modifier = Modifier,
-    tts: TextToSpeech?
+    tts: TextToSpeech?,
+    availableVoices: List<Voice>
 ) {
     val context = LocalContext.current
     val recordAudioPermission = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
@@ -111,7 +132,8 @@ fun SpeechToTextScreen(
 
     // --- SETTINGS STATE ---
     var showSettingsDialog by remember { mutableStateOf(false) }
-    var showManualInput by remember { mutableStateOf(true) }
+    // UPDATED: Manual Input defaults to FALSE (closed)
+    var showManualInput by remember { mutableStateOf(false) }
 
     // --- SELECTION & COMBINE STATE ---
     var isSelectionMode by remember { mutableStateOf(false) }
@@ -139,7 +161,7 @@ fun SpeechToTextScreen(
             // Only alert if we have advice and it hasn't been "handled" (simple check for now)
             if (!item.advice.isNullOrBlank() && !item.isAdviceLoading) {
 
-                // 1. Vibrate (Heavy pattern)
+                // 1. Vibrate (Heavy pattern) - Always happens on High Risk
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500), -1))
                 } else {
@@ -147,13 +169,23 @@ fun SpeechToTextScreen(
                     vibrator.vibrate(500)
                 }
 
-                // 2. Speak
-                tts?.speak(
-                    "注意！偵測到高風險詐騙內容。AI建議：${item.advice}",
-                    TextToSpeech.QUEUE_FLUSH,
-                    null,
-                    "ALERT_${item.id}"
-                )
+                // 2. Speak (Conditioned on settings)
+                if (TtsConfig.isEnabled) {
+                    // Update Voice if specific one selected
+                    if (TtsConfig.currentVoiceName.isNotBlank()) {
+                        val voice = availableVoices.find { it.name == TtsConfig.currentVoiceName }
+                        if (voice != null) {
+                            tts?.voice = voice
+                        }
+                    }
+
+                    tts?.speak(
+                        "注意！偵測到高風險詐騙內容。AI建議：${item.advice}",
+                        TextToSpeech.QUEUE_FLUSH,
+                        null,
+                        "ALERT_${item.id}"
+                    )
+                }
             }
         }
     }
@@ -253,9 +285,15 @@ fun SpeechToTextScreen(
     if (showSettingsDialog) {
         SettingsDialog(
             initialShowManualInput = showManualInput,
+            availableVoices = availableVoices,
             onDismiss = { showSettingsDialog = false },
-            onConfirm = { newUrl, newShowManualInput, newAdviceProvider ->
-                RetrofitClientSlow.updateSettings(newUrl, newAdviceProvider)
+            onConfirm = { newUrl, newShowManualInput, newAdviceProvider, newAsrProvider, newYatingKey, newTtsEnabled, newVoiceName ->
+                RetrofitClientSlow.updateSettings(newUrl, newAdviceProvider, newAsrProvider, newYatingKey)
+
+                // Update TTS Settings
+                TtsConfig.isEnabled = newTtsEnabled
+                TtsConfig.currentVoiceName = newVoiceName
+
                 showManualInput = newShowManualInput
                 showSettingsDialog = false
             }
@@ -305,7 +343,7 @@ fun SpeechToTextScreen(
                     textAlign = TextAlign.Center
                 )
 
-                // --- NEW VISUALIZER ---
+                // --- VISUALIZER ---
                 Spacer(modifier = Modifier.height(16.dp))
                 AudioVisualizer(
                     isRecording = speechRecognizer.isRecording.value,
@@ -313,8 +351,15 @@ fun SpeechToTextScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-                // ----------------------
-
+                // ------------------
+                speechRecognizer.errorState.value?.let { error ->
+                    Text(
+                        text = error,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
                 Crossfade(
                     targetState = speechRecognizer.recognizedText.value to speechRecognizer.partialText.value,
                     label = "speech-text"

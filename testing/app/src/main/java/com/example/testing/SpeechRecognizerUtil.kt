@@ -1,7 +1,11 @@
 package com.example.testing
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
@@ -12,9 +16,22 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import okhttp3.MediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import okio.ByteString
+import org.json.JSONObject
 import java.util.UUID
+import java.util.concurrent.TimeUnit
+import kotlin.math.sqrt
 
 data class Transcription(
     val id: String = UUID.randomUUID().toString(),
@@ -25,76 +42,78 @@ data class Transcription(
 )
 
 class SpeechRecognizerUtil(private val context: Context) {
+    // --- GOOGLE NATIVE COMPONENTS ---
     private var speechRecognizer: SpeechRecognizer? = SpeechRecognizer.createSpeechRecognizer(context)
 
-    // SETTINGS
+    // --- YATING / WEBSOCKET COMPONENTS ---
+    private val client = OkHttpClient.Builder()
+        .pingInterval(30, TimeUnit.SECONDS)
+        .build()
+
+    private var webSocket: WebSocket? = null
+    private var audioRecord: AudioRecord? = null
+    private var recordingJob: Job? = null
+
+    // Audio Configuration for Yating (16kHz, Mono, PCM 16bit)
+    private val SAMPLE_RATE = 16000
+    private val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
+    private val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
+    private val BUFFER_SIZE = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT) * 2
+
+    // --- SETTINGS ---
     val currentLanguage = mutableStateOf("zh-TW")
 
-    // STATES
+    // --- UI STATES ---
     val isRecording = mutableStateOf(false)
     private val isListeningInternal = mutableStateOf(false)
 
-    // NEW: Volume Level (0.0f to 1.0f) for the UI Animation
     val soundLevel = mutableFloatStateOf(0f)
-
     val recognizedText = mutableStateOf("")
     val partialText = mutableStateOf("")
     val errorState = mutableStateOf<String?>(null)
     val transcriptionHistory = mutableStateOf<List<Transcription>>(emptyList())
 
-    private val recognitionListener = object : RecognitionListener {
+    // =========================================================================
+    // 1. GOOGLE RECOGNIZER IMPLEMENTATION
+    // =========================================================================
+    private val googleRecognitionListener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
             isListeningInternal.value = true
             errorState.value = null
         }
-
-        override fun onBeginningOfSpeech() {
-            partialText.value = ""
-        }
-
+        override fun onBeginningOfSpeech() { partialText.value = "" }
         override fun onRmsChanged(rmsdB: Float) {
-            // NEW: Convert dB (-2 to 10) to a normalized 0.0 - 1.0 range for the UI
-            // rmsdB is usually between -2 (silence) and 10 (loud)
             val minDb = -2f
             val maxDb = 10f
             val normalized = ((rmsdB - minDb) / (maxDb - minDb)).coerceIn(0f, 1f)
             soundLevel.floatValue = normalized
         }
-
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() {
-            isListeningInternal.value = false
-            soundLevel.floatValue = 0f // Reset wave
+            if (ServerConfigAsr.currentProvider.id == "google") {
+                isListeningInternal.value = false
+                soundLevel.floatValue = 0f
+            }
         }
-
         override fun onError(error: Int) {
+            if (ServerConfigAsr.currentProvider.id != "google") return
+
             isListeningInternal.value = false
             soundLevel.floatValue = 0f
 
             val message = when (error) {
-                SpeechRecognizer.ERROR_AUDIO -> "Audio error"
-                SpeechRecognizer.ERROR_CLIENT -> "Client error"
-                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Permissions error"
-                SpeechRecognizer.ERROR_NETWORK -> "Network error"
                 SpeechRecognizer.ERROR_NO_MATCH -> "No match"
-                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Busy"
-                SpeechRecognizer.ERROR_SERVER -> "Server error"
                 SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Timeout"
-                else -> "Unknown error"
+                else -> "Error: $error"
             }
-            Log.e("SpeechRecognizer", "Error: $message ($error)")
+            Log.e("SpeechRecognizer", "Google Error: $message")
 
             if (isRecording.value) {
                 when (error) {
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
-                    SpeechRecognizer.ERROR_NO_MATCH -> {
-                        restartListening()
-                    }
+                    SpeechRecognizer.ERROR_NO_MATCH -> { restartListening() }
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
-                        CoroutineScope(Dispatchers.Main).launch {
-                            delay(500)
-                            restartListening()
-                        }
+                        CoroutineScope(Dispatchers.Main).launch { delay(500); restartListening() }
                     }
                     else -> {
                         isRecording.value = false
@@ -103,46 +122,306 @@ class SpeechRecognizerUtil(private val context: Context) {
                 }
             }
         }
-
         override fun onResults(results: Bundle?) {
             results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.let {
-                if (it.isNotEmpty()) {
-                    val finalText = it[0]
-                    if (finalText.isNotBlank() && finalText.length > 1) {
-                        val newHistory = transcriptionHistory.value.toMutableList()
-                        newHistory.add(0, Transcription(text = finalText))
-                        transcriptionHistory.value = newHistory
-
-                        recognizedText.value = ""
-                        partialText.value = ""
-                    }
-                }
+                if (it.isNotEmpty()) handleFinalResult(it[0])
             }
-
             if (isRecording.value) {
-                CoroutineScope(Dispatchers.Main).launch {
-                    delay(300)
-                    restartListening()
-                }
+                CoroutineScope(Dispatchers.Main).launch { delay(300); restartListening() }
             }
         }
-
         override fun onPartialResults(partialResults: Bundle?) {
             partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.let {
-                if (it.isNotEmpty()) {
-                    val partial = it[0]
-                    if (partial.isNotBlank() && partial.length > 1) {
-                        partialText.value = partial
-                    }
-                }
+                if (it.isNotEmpty()) partialText.value = it[0]
             }
         }
-
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
     init {
-        speechRecognizer?.setRecognitionListener(recognitionListener)
+        speechRecognizer?.setRecognitionListener(googleRecognitionListener)
+    }
+
+    // =========================================================================
+    // 2. YATING IMPLEMENTATION (WebSocket + AudioRecord)
+    // =========================================================================
+
+    private fun startYatingListening() {
+        errorState.value = null
+        val apiKey = ServerConfigAsr.yatingApiKey.trim()
+
+        if (apiKey.isBlank()) {
+            errorState.value = "請輸入 Yating API Key"
+            isRecording.value = false
+            return
+        }
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Log.d("Yating", "Fetching Auth Token...")
+                val token = fetchYatingToken(apiKey)
+
+                if (token == null) {
+                    CoroutineScope(Dispatchers.Main).launch {
+                        errorState.value = "Yating 驗證失敗: 無法取得 Token"
+                        stopRecording()
+                    }
+                    return@launch
+                }
+
+                connectYatingWebSocket(token)
+
+            } catch (e: Exception) {
+                Log.e("Yating", "Start Error: ${e.message}")
+                CoroutineScope(Dispatchers.Main).launch {
+                    errorState.value = "啟動失敗: ${e.message}"
+                    stopRecording()
+                }
+            }
+        }
+    }
+
+    private fun fetchYatingToken(apiKey: String): String? {
+        try {
+            val pipeline = when (currentLanguage.value) {
+                "en-US" -> "asr-en-std"
+                else -> "asr-zh-en-std"
+            }
+
+            val jsonBody = JSONObject().apply {
+                put("pipeline", pipeline)
+            }
+
+            val mediaType = MediaType.parse("application/json; charset=utf-8")
+            val body = RequestBody.create(mediaType, jsonBody.toString())
+
+            val request = Request.Builder()
+                .url("https://asr.api.yating.tw/v1/token")
+                .addHeader("key", apiKey)
+                .post(body)
+                .build()
+
+            val response = client.newCall(request).execute()
+
+            // --- FIXED: Use method calls instead of property access ---
+            if (!response.isSuccessful) {
+                Log.e("Yating", "Token Fail: ${response.code()} ${response.body()?.string()}")
+                return null
+            }
+
+            val responseBody = response.body()?.string() ?: return null
+            val json = JSONObject(responseBody)
+            return json.optString("auth_token", null)
+
+        } catch (e: Exception) {
+            Log.e("Yating", "Token Exception: ${e.message}")
+            return null
+        }
+    }
+
+    private fun connectYatingWebSocket(token: String) {
+        try {
+            Log.d("Yating", "Connecting to WebSocket...")
+            val request = Request.Builder()
+                .url("wss://asr.api.yating.tw/ws/v1/?token=$token")
+                .build()
+
+            webSocket = client.newWebSocket(request, object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    Log.d("Yating", "WebSocket Opened")
+                    startStreamingAudio(webSocket)
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    try {
+                        val json = JSONObject(text)
+                        val pipe = json.optJSONObject("pipe")
+
+                        if (pipe != null) {
+                            val transcript = pipe.optString("asr_sentence")
+                            val isFinal = pipe.optBoolean("asr_final", false)
+
+                            CoroutineScope(Dispatchers.Main).launch {
+                                if (isFinal) {
+                                    if (transcript.isNotBlank()) {
+                                        handleFinalResult(transcript)
+                                    }
+                                } else {
+                                    partialText.value = transcript
+                                }
+                            }
+                        } else {
+                            val status = json.optString("status")
+                            if (status == "error") {
+                                val detail = json.optString("detail")
+                                Log.e("Yating", "API Error: $detail")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("Yating", "Json Parse Error: ${e.message}")
+                    }
+                }
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    Log.d("Yating", "Closing: $code / $reason")
+                    CoroutineScope(Dispatchers.Main).launch {
+                        if (code != 1000) {
+                            errorState.value = "連線關閉: $reason"
+                        }
+                        stopRecording()
+                    }
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    Log.e("Yating", "Failure: ${t.message}")
+                    CoroutineScope(Dispatchers.Main).launch {
+                        errorState.value = "連線失敗: ${t.localizedMessage}"
+                        stopRecording()
+                    }
+                }
+            })
+        } catch (e: Exception) {
+            Log.e("Yating", "WS Init Error: ${e.message}")
+            CoroutineScope(Dispatchers.Main).launch {
+                errorState.value = "WS Error: ${e.message}"
+                isRecording.value = false
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startStreamingAudio(ws: WebSocket) {
+        recordingJob = CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Log.d("Yating", "Starting AudioRecord...")
+                audioRecord = AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    SAMPLE_RATE,
+                    CHANNEL_CONFIG,
+                    AUDIO_FORMAT,
+                    BUFFER_SIZE
+                )
+
+                if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                    Log.e("Yating", "AudioRecord init failed")
+                    CoroutineScope(Dispatchers.Main).launch {
+                        errorState.value = "麥克風初始化失敗"
+                        stopRecording()
+                    }
+                    return@launch
+                }
+
+                audioRecord?.startRecording()
+                Log.d("Yating", "AudioRecord started successfully")
+                isListeningInternal.value = true
+
+                val buffer = ByteArray(BUFFER_SIZE)
+
+                while (isActive && isRecording.value) {
+                    val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
+                    if (read > 0) {
+                        val byteString = ByteString.of(buffer, 0, read)
+                        ws.send(byteString)
+
+                        // Calculate Volume for UI
+                        var sum = 0.0
+                        for (i in 0 until read step 2) {
+                            val sample = (buffer[i].toInt() and 0xFF) or (buffer[i+1].toInt() shl 8)
+                            val shortSample = sample.toShort()
+                            sum += shortSample * shortSample
+                        }
+                        val rms = sqrt(sum / (read / 2))
+                        val normalized = (rms / 2000.0).coerceIn(0.0, 1.0).toFloat()
+                        soundLevel.floatValue = normalized
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("Yating", "Streaming Error: ${e.message}")
+                CoroutineScope(Dispatchers.Main).launch {
+                    errorState.value = "錄音錯誤: ${e.message}"
+                    stopRecording()
+                }
+            } finally {
+                stopYatingInternal()
+            }
+        }
+    }
+
+    private fun stopYatingListening() {
+        recordingJob?.cancel()
+        stopYatingInternal()
+    }
+
+    private fun stopYatingInternal() {
+        try {
+            if (audioRecord?.state == AudioRecord.STATE_INITIALIZED) {
+                audioRecord?.stop()
+            }
+            audioRecord?.release()
+            audioRecord = null
+
+            webSocket?.close(1000, "User stopped")
+            webSocket = null
+        } catch (e: Exception) {
+            Log.e("Yating", "Stop Error: ${e.message}")
+        }
+        isListeningInternal.value = false
+    }
+
+    // =========================================================================
+    // 3. SHARED LOGIC & CONTROLS
+    // =========================================================================
+
+    private fun handleFinalResult(text: String) {
+        if (text.isNotBlank()) {
+            val newHistory = transcriptionHistory.value.toMutableList()
+            newHistory.add(0, Transcription(text = text))
+            transcriptionHistory.value = newHistory
+            recognizedText.value = ""
+            partialText.value = ""
+        }
+    }
+
+    fun startRecording() {
+        if (isRecording.value) return
+        isRecording.value = true
+        errorState.value = null
+        startListening()
+    }
+
+    private fun startListening() {
+        val provider = ServerConfigAsr.currentProvider
+        Log.d("SpeechRecognizer", "Starting with provider: ${provider.name}")
+
+        if (provider.id == "yating") {
+            startYatingListening()
+        } else {
+            startGoogleListening()
+        }
+    }
+
+    private fun restartListening() {
+        if (!isRecording.value) return
+        startListening()
+    }
+
+    fun stopRecording() {
+        isRecording.value = false
+        soundLevel.floatValue = 0f
+        partialText.value = ""
+
+        speechRecognizer?.stopListening()
+        stopYatingListening()
+    }
+
+    private fun startGoogleListening() {
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                speechRecognizer?.startListening(createIntent())
+            } catch (e: Exception) {
+                restartRecognizer()
+            }
+        }
     }
 
     private fun createIntent(): Intent {
@@ -155,58 +434,20 @@ class SpeechRecognizerUtil(private val context: Context) {
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 10000L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
 
-            // Force unprocessed audio (fixes digital audio issues)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 putExtra("android.speech.extra.AUDIO_SOURCE", 9) // UNPROCESSED
             } else {
-                putExtra("android.speech.extra.AUDIO_SOURCE", 6) // VOICE_RECOGNITION
+                putExtra("android.speech.extra.AUDIO_SOURCE", 6)
             }
         }
-    }
-
-    fun startRecording() {
-        if (isRecording.value) return
-        isRecording.value = true
-        errorState.value = null
-        startListening()
-    }
-
-    private fun startListening() {
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                speechRecognizer?.startListening(createIntent())
-            } catch (e: Exception) {
-                Log.e("SpeechRec", "Start failed", e)
-                restartRecognizer()
-            }
-        }
-    }
-
-    private fun restartListening() {
-        if (!isRecording.value) return
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                speechRecognizer?.startListening(createIntent())
-            } catch(e: Exception) {
-                restartRecognizer()
-            }
-        }
-    }
-
-    fun stopRecording() {
-        isRecording.value = false
-        isListeningInternal.value = false
-        speechRecognizer?.stopListening()
-        partialText.value = ""
-        soundLevel.floatValue = 0f
     }
 
     private fun restartRecognizer() {
         speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
-        speechRecognizer?.setRecognitionListener(recognitionListener)
-        if (isRecording.value) {
-            startListening()
+        speechRecognizer?.setRecognitionListener(googleRecognitionListener)
+        if (isRecording.value && ServerConfigAsr.currentProvider.id == "google") {
+            startGoogleListening()
         }
     }
 
@@ -224,6 +465,7 @@ class SpeechRecognizerUtil(private val context: Context) {
         }
     }
 
+    // --- History Helper Functions ---
     fun addManualTranscription(text: String) {
         if (text.isBlank()) return
         val newHistory = transcriptionHistory.value.toMutableList()
@@ -270,15 +512,13 @@ class SpeechRecognizerUtil(private val context: Context) {
 
     fun destroy() {
         speechRecognizer?.destroy()
+        stopYatingListening()
     }
 
     fun addCombinedTranscription(text: String): String {
         val newId = UUID.randomUUID().toString()
         val newHistory = transcriptionHistory.value.toMutableList()
-        newHistory.add(0, Transcription(
-            id = newId,
-            text = text,
-        ))
+        newHistory.add(0, Transcription(id = newId, text = text))
         transcriptionHistory.value = newHistory
         return newId
     }

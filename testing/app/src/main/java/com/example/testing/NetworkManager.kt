@@ -49,6 +49,29 @@ data class Message(
     val content: String
 )
 
+// --- ASR Configuration ---
+data class AsrProvider(
+    val name: String,
+    val id: String
+)
+
+object ServerConfigAsr {
+    val PROVIDERS = listOf(
+        AsrProvider("Google Native (Default)", "google"),
+        AsrProvider("Yating (雅婷逐字稿)", "yating")
+    )
+
+    var currentProvider: AsrProvider = PROVIDERS[0]
+    var yatingApiKey: String = ""
+}
+
+// --- NEW: TTS Configuration ---
+object TtsConfig {
+    // UPDATED: Defaults to FALSE (closed)
+    var isEnabled: Boolean = false
+    var currentVoiceName: String = ""
+}
+
 // 2. Interface
 interface ApiServiceSlow {
     @POST
@@ -107,7 +130,6 @@ object RetrofitClientFast {
 }
 
 object ServerConfigAdvice {
-    // Constant for the manual option name to identify it in the UI
     const val MANUAL_PROVIDER_NAME = "Manual Input (Qwen)"
 
     val PROVIDERS = listOf(
@@ -135,7 +157,6 @@ object ServerConfigAdvice {
             useAuthHeader = false,
             supportsReasoning = false
         ),
-        // NEW OPTION 1: Backup Qwen
         AdviceProvider(
             name = "Local (Qwen - Backup)",
             baseUrl = "https://ai-anti-scam2.443.gs/v1/",
@@ -144,10 +165,9 @@ object ServerConfigAdvice {
             useAuthHeader = false,
             supportsReasoning = false
         ),
-        // NEW OPTION 2: Manual Input
         AdviceProvider(
             name = MANUAL_PROVIDER_NAME,
-            baseUrl = "", // Placeholder, will be filled by UI
+            baseUrl = "",
             apiKey = "7a4c019c-db87-4e21-b90e-9cfc75057f7e",
             modelId = "qwen/qwen3-30b-a3b-2507",
             useAuthHeader = false,
@@ -193,7 +213,6 @@ object RetrofitClientSlow {
     }
 
     fun rebuild() {
-        // This rebuilds the generic client, but the URL is passed dynamically in the interface method
         val url = "https://google.com/"
         apiService = Retrofit.Builder()
             .baseUrl(url)
@@ -203,10 +222,19 @@ object RetrofitClientSlow {
             .create(ApiServiceSlow::class.java)
     }
 
-    fun updateSettings(newFastUrl: String, newAdviceProvider: AdviceProvider) {
+    fun updateSettings(
+        newFastUrl: String,
+        newAdviceProvider: AdviceProvider,
+        newAsrProvider: AsrProvider,
+        newYatingKey: String
+    ) {
         ServerConfig.currentBaseUrl = newFastUrl
         RetrofitClientFast.rebuild()
+
         ServerConfigAdvice.currentProvider = newAdviceProvider
+
+        ServerConfigAsr.currentProvider = newAsrProvider
+        ServerConfigAsr.yatingApiKey = newYatingKey
     }
 
     fun updateUrl(newUrl: String) {
