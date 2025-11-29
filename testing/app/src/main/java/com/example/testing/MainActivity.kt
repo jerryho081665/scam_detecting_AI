@@ -2,10 +2,8 @@ package com.example.testing
 
 import android.Manifest
 import android.content.Context
-import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
-import android.os.Vibrator
 import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
@@ -46,7 +44,10 @@ import com.example.testing.ui.theme.TestingTheme
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
+import com.google.gson.Gson
 import kotlinx.coroutines.launch
+import okhttp3.MediaType
+import okhttp3.RequestBody
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
@@ -108,37 +109,25 @@ fun SpeechToTextScreen(
     val context = LocalContext.current
     val recordAudioPermission = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
 
-    // --- UPDATED: Initialize DB and Pass DAO ---
     val db = remember { AppDatabase.getDatabase(context) }
     val speechRecognizer = remember { SpeechRecognizerUtil(context, db.transcriptionDao()) }
 
     val keyboardController = LocalSoftwareKeyboardController.current
-
     val scope = rememberCoroutineScope()
     var manualInputText by remember { mutableStateOf("") }
-
-    // --- UPDATED: LazyListState for Auto-Scroll ---
     val listState = rememberLazyListState()
 
     val vibrator = remember {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-            vibratorManager.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-        }
+        val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+        vibratorManager.defaultVibrator
     }
 
-    // --- SETTINGS STATE ---
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showManualInput by remember { mutableStateOf(false) }
 
-    // --- SELECTION & COMBINE STATE ---
     var isSelectionMode by remember { mutableStateOf(false) }
     val selectedIds = remember { mutableStateListOf<String>() }
 
-    // --- LOGIC: Calculate Highest Risk Item ---
     val highestRiskItem by remember {
         derivedStateOf {
             speechRecognizer.transcriptionHistory.value
@@ -151,26 +140,17 @@ fun SpeechToTextScreen(
     val maxRiskAdvice = highestRiskItem?.advice
     val isRiskLoading = highestRiskItem?.isAdviceLoading ?: false
 
-    // --- AUTO-SCROLL LOGIC ---
-    // When history size changes, scroll to top (index 0) if recording or user is near top
     LaunchedEffect(speechRecognizer.transcriptionHistory.value.size) {
         if (speechRecognizer.transcriptionHistory.value.isNotEmpty()) {
             listState.animateScrollToItem(0)
         }
     }
 
-    // --- ALERT SYSTEM ---
     LaunchedEffect(highestRiskItem) {
         val item = highestRiskItem
         if (item != null && item.riskScore != null && item.riskScore > 70) {
             if (!item.advice.isNullOrBlank() && !item.isAdviceLoading) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500), -1))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(500)
-                }
-
+                vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500), -1))
                 if (TtsConfig.isEnabled) {
                     if (TtsConfig.currentVoiceName.isNotBlank()) {
                         val voice = availableVoices.find { it.name == TtsConfig.currentVoiceName }
@@ -178,18 +158,18 @@ fun SpeechToTextScreen(
                             tts?.voice = voice
                         }
                     }
-                    tts?.speak(
-                        "注意！偵測到高風險詐騙內容。AI建議：${item.advice}",
-                        TextToSpeech.QUEUE_FLUSH,
-                        null,
-                        "ALERT_${item.id}"
-                    )
+                    tts?.speak("注意！偵測到高風險詐騙內容。AI建議：${item.advice}", TextToSpeech.QUEUE_FLUSH, null, "ALERT_${item.id}")
                 }
             }
         }
     }
 
     fun checkScamRisk(id: String, textToCheck: String) {
+        if (textToCheck.length < 6) {
+            Log.d("ScamCheck", "Text ignored (too short): $textToCheck")
+            return
+        }
+
         scope.launch {
             try {
                 // STEP 1: FAST Request
@@ -205,31 +185,69 @@ fun SpeechToTextScreen(
 
                     try {
                         val provider = ServerConfigAdvice.currentProvider
-                        val endpoint = if (provider.baseUrl.endsWith("/")) "chat/completions" else "/chat/completions"
-                        var fullUrl = provider.baseUrl + endpoint
-                        val authHeader: String?
-                        if (provider.useAuthHeader) {
-                            authHeader = "Bearer ${provider.apiKey}"
+                        var adviceText = "無法取得建議"
+
+                        // --- RAW JSON MODE LOGIC ---
+                        if (provider.isRawJsonMode && provider.rawJsonTemplate.isNotBlank()) {
+                            val fullUrl = provider.baseUrl
+
+                            val headers = mutableMapOf("Content-Type" to "application/json")
+                            if (provider.useAuthHeader && provider.apiKey.isNotBlank()) {
+                                headers["Authorization"] = "Bearer ${provider.apiKey}"
+                            }
+
+                            val safeText = textToCheck.replace("\"", "\\\"").replace("\n", "\\n")
+                            val jsonBodyString = provider.rawJsonTemplate.replace("{{TEXT}}", safeText)
+
+                            val requestBody = RequestBody.create(
+                                MediaType.parse("application/json; charset=utf-8"),
+                                jsonBodyString
+                            )
+
+                            val rawResponse = RetrofitClientSlow.instance.getRawAdvice(fullUrl, headers, requestBody)
+                            val rawResponseString = rawResponse.string()
+
+                            try {
+                                val gson = Gson()
+                                val parsedObj = gson.fromJson(rawResponseString, AdviceResponse::class.java)
+                                val content = parsedObj.choices?.firstOrNull()?.message?.content
+                                if (!content.isNullOrBlank()) {
+                                    adviceText = content
+                                } else {
+                                    adviceText = "Raw: " + rawResponseString.take(100) + "..."
+                                }
+                            } catch (e: Exception) {
+                                adviceText = "Raw: " + rawResponseString.take(150)
+                            }
+
                         } else {
-                            fullUrl += "?token=${provider.apiKey}"
-                            authHeader = null
+                            // --- STANDARD OPENAI MODE ---
+                            val endpoint = if (provider.baseUrl.endsWith("/")) "chat/completions" else "/chat/completions"
+                            var fullUrl = provider.baseUrl + endpoint
+                            val authHeader: String?
+                            if (provider.useAuthHeader) {
+                                authHeader = "Bearer ${provider.apiKey}"
+                            } else {
+                                fullUrl += "?token=${provider.apiKey}"
+                                authHeader = null
+                            }
+
+                            val adviceResponse = RetrofitClientSlow.instance.getAdvice(
+                                url = fullUrl,
+                                auth = authHeader,
+                                request = RetrofitClientSlow.convert(request)
+                            )
+
+                            adviceText = adviceResponse.choices?.firstOrNull()?.message?.content
+                                ?: "無法取得建議"
                         }
 
-                        val adviceResponse = RetrofitClientSlow.instance.getAdvice(
-                            url = fullUrl,
-                            auth = authHeader,
-                            request = RetrofitClientSlow.convert(request)
-                        )
-
-                        var adviceText = adviceResponse.choices.firstOrNull()?.message?.content
-                            ?: "無法取得建議"
                         adviceText = adviceText.replace(Regex("<think>.*?</think>", RegexOption.DOT_MATCHES_ALL), "").trim()
-
                         speechRecognizer.updateAdvice(id, adviceText)
 
                     } catch (e: Exception) {
                         Log.e("ScamCheck", "Advice Error: ${e.message}")
-                        speechRecognizer.setAdviceLoading(id, false)
+                        speechRecognizer.updateAdvice(id, "Error: ${e.message}")
                     }
                 }
             } catch (e: Exception) {
@@ -249,19 +267,18 @@ fun SpeechToTextScreen(
             val newId = speechRecognizer.addCombinedTranscription(combinedText)
             checkScamRisk(newId, combinedText)
 
+            selectedIds.forEach { id ->
+                speechRecognizer.deleteTranscription(id)
+            }
             selectedIds.clear()
             isSelectionMode = false
         }
     }
 
-    // Auto-check logic
     LaunchedEffect(speechRecognizer.transcriptionHistory.value.size) {
         val history = speechRecognizer.transcriptionHistory.value
         if (history.isNotEmpty()) {
             val latestItem = history.first()
-            // We only check if it was just added (timestamp is very recent) or if risk is null
-            // Since we load from DB now, we don't want to re-check old items every time app opens.
-            // Simple check: Only check if risk is null.
             if (latestItem.riskScore == null && latestItem.text.isNotBlank()) {
                 checkScamRisk(latestItem.id, latestItem.text)
             }
@@ -270,11 +287,6 @@ fun SpeechToTextScreen(
 
     DisposableEffect(Unit) {
         onDispose { speechRecognizer.destroy() }
-    }
-
-    val languageButtonText = when (speechRecognizer.currentLanguage.value) {
-        "zh-TW" -> "中文"
-        else -> "EN"
     }
 
     if (showSettingsDialog) {
@@ -297,7 +309,6 @@ fun SpeechToTextScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // ... (SPEECH AREA - Box/Visualizer logic remains same) ...
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -312,14 +323,7 @@ fun SpeechToTextScreen(
                 Icon(Icons.Default.Settings, "Settings", tint = MaterialTheme.colorScheme.primary)
             }
 
-            Button(
-                onClick = { speechRecognizer.toggleLanguage() },
-                modifier = Modifier.align(Alignment.TopEnd),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-            ) {
-                Text(text = languageButtonText, color = Color.White)
-            }
+            // --- REMOVED: Language Toggle Button was here ---
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("即時語音轉錄", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)
@@ -376,7 +380,6 @@ fun SpeechToTextScreen(
             }
         }
 
-        // --- 2. MANUAL INPUT AREA ---
         AnimatedVisibility(
             visible = showManualInput,
             enter = expandVertically(),
@@ -420,7 +423,6 @@ fun SpeechToTextScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // --- 3. HISTORY HEADER ---
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -457,7 +459,6 @@ fun SpeechToTextScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // --- 4. HISTORY LIST (With Auto-Scroll State) ---
         if (speechRecognizer.transcriptionHistory.value.isEmpty()) {
             Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 Text(text = "尚無紀錄", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
@@ -465,8 +466,8 @@ fun SpeechToTextScreen(
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                state = listState, // Pass the state
-                reverseLayout = false // We already ordered by DESC in DAO, so index 0 is newest
+                state = listState,
+                reverseLayout = false
             ) {
                 items(
                     items = speechRecognizer.transcriptionHistory.value,
@@ -501,7 +502,6 @@ fun SpeechToTextScreen(
             }
         }
 
-        // --- 5. RISK METER ---
         if (speechRecognizer.transcriptionHistory.value.isNotEmpty()) {
             Spacer(modifier = Modifier.height(12.dp))
             RiskLevelMeter(score = maxRiskScore, highestRiskAdvice = maxRiskAdvice, isLoading = isRiskLoading)

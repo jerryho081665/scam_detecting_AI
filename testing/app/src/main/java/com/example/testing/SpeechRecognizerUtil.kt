@@ -6,7 +6,6 @@ import android.content.Intent
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -57,8 +56,7 @@ class SpeechRecognizerUtil(private val context: Context, private val dao: Transc
     private val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
     private val BUFFER_SIZE = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT) * 2
 
-    // --- SETTINGS ---
-    val currentLanguage = mutableStateOf("zh-TW")
+    // --- REMOVED: currentLanguage state ---
 
     // --- UI STATES ---
     val isRecording = mutableStateOf(false)
@@ -76,7 +74,7 @@ class SpeechRecognizerUtil(private val context: Context, private val dao: Transc
     private val scope = CoroutineScope(Dispatchers.Main)
 
     // =========================================================================
-    // 1. GOOGLE RECOGNIZER LISTENER (Moved UP before init)
+    // 1. GOOGLE RECOGNIZER LISTENER
     // =========================================================================
     private val googleRecognitionListener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
@@ -138,7 +136,7 @@ class SpeechRecognizerUtil(private val context: Context, private val dao: Transc
     }
 
     // =========================================================================
-    // 2. INIT BLOCK (Now safe to use listener)
+    // 2. INIT BLOCK
     // =========================================================================
     init {
         speechRecognizer?.setRecognitionListener(googleRecognitionListener)
@@ -190,10 +188,8 @@ class SpeechRecognizerUtil(private val context: Context, private val dao: Transc
 
     private fun fetchYatingToken(apiKey: String): String? {
         try {
-            val pipeline = when (currentLanguage.value) {
-                "en-US" -> "asr-en-std"
-                else -> "asr-zh-en-std"
-            }
+            // --- UPDATED: Hardcoded to zh-en mixed pipeline (No English Mode) ---
+            val pipeline = "asr-zh-en-std"
 
             val jsonBody = JSONObject().apply {
                 put("pipeline", pipeline)
@@ -217,7 +213,7 @@ class SpeechRecognizerUtil(private val context: Context, private val dao: Transc
 
             val responseBody = response.body()?.string() ?: return null
             val json = JSONObject(responseBody)
-            return json.optString("auth_token", null)
+            return json.optString("auth_token", "")
 
         } catch (e: Exception) {
             Log.e("Yating", "Token Exception: ${e.message}")
@@ -413,12 +409,11 @@ class SpeechRecognizerUtil(private val context: Context, private val dao: Transc
     private fun createIntent(): Intent {
         return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, currentLanguage.value)
+            // --- UPDATED: Hardcoded to Traditional Chinese ---
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-TW")
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                putExtra("android.speech.extra.AUDIO_SOURCE", 9)
-            }
+            putExtra("android.speech.extra.AUDIO_SOURCE", 9)
         }
     }
 
@@ -431,12 +426,7 @@ class SpeechRecognizerUtil(private val context: Context, private val dao: Transc
         }
     }
 
-    fun toggleLanguage() {
-        val wasRecording = isRecording.value
-        if (wasRecording) stopRecording()
-        currentLanguage.value = if (currentLanguage.value == "zh-TW") "en-US" else "zh-TW"
-        if (wasRecording) startRecording()
-    }
+    // --- REMOVED: toggleLanguage function ---
 
     // --- History Helper Functions (Updated for DB) ---
     fun addManualTranscription(text: String) {

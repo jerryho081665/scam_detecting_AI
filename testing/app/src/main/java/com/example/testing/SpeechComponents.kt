@@ -11,17 +11,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+// import androidx.compose.ui.draw.scale // Removed: No longer needed as Switch is gone
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-
-// SettingsDialog and RiskLevelMeter remain unchanged...
-// Copy the previous SettingsDialog and RiskLevelMeter code here if needed,
-// or I can assume you will keep them. I will focus on TranscriptionItem.
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,8 +29,6 @@ fun SettingsDialog(
     onDismiss: () -> Unit,
     onConfirm: (String, Boolean, AdviceProvider, AsrProvider, String, Boolean, String) -> Unit
 ) {
-    // (Keeping your existing SettingsDialog code for brevity - paste it back here)
-    // ...
     val presets = ServerConfig.PRESETS
     var selectedOption by remember { mutableStateOf(ServerConfig.currentBaseUrl) }
     var customUrl by remember { mutableStateOf("") }
@@ -43,30 +39,51 @@ fun SettingsDialog(
         customUrl = ServerConfig.currentBaseUrl
     }
 
-    // 2. Advice Provider State
+    // --- 2. Advice Provider State ---
     val adviceProviders = ServerConfigAdvice.PROVIDERS
     var selectedAdviceProvider by remember { mutableStateOf(ServerConfigAdvice.currentProvider) }
-
     val isManualAdviceName = ServerConfigAdvice.MANUAL_PROVIDER_NAME
-    var customAdviceUrl by remember { mutableStateOf("") }
 
+    // Manual Input States
+    var manualAdviceUrl by remember { mutableStateOf("") }
+    var manualAdviceKey by remember { mutableStateOf("") }
+    var manualAdviceUseAuth by remember { mutableStateOf(false) }
+
+    // Default to template if empty
+    var manualRawTemplate by remember { mutableStateOf(ServerConfigAdvice.DEFAULT_RAW_TEMPLATE) }
+
+    // Initialize manual states
     LaunchedEffect(Unit) {
         if (selectedAdviceProvider.name == isManualAdviceName) {
-            customAdviceUrl = selectedAdviceProvider.baseUrl
+            manualAdviceUrl = selectedAdviceProvider.baseUrl
+            manualAdviceKey = selectedAdviceProvider.apiKey
+            manualAdviceUseAuth = selectedAdviceProvider.useAuthHeader
+            if (selectedAdviceProvider.rawJsonTemplate.isNotBlank()) {
+                manualRawTemplate = selectedAdviceProvider.rawJsonTemplate
+            }
+        } else {
+            // Pre-fill with defaults if not currently selected
+            val defaultManual = adviceProviders.find { it.name == isManualAdviceName }
+            if (defaultManual != null) {
+                manualAdviceUrl = defaultManual.baseUrl
+                manualAdviceKey = defaultManual.apiKey
+                manualAdviceUseAuth = defaultManual.useAuthHeader
+                if (defaultManual.rawJsonTemplate.isNotBlank()) {
+                    manualRawTemplate = defaultManual.rawJsonTemplate
+                }
+            }
         }
     }
 
-    // 3. ASR Provider State
+    // --- 3. ASR & TTS State ---
     val asrProviders = ServerConfigAsr.PROVIDERS
     var selectedAsrProvider by remember { mutableStateOf(ServerConfigAsr.currentProvider) }
     var yatingApiKey by remember { mutableStateOf(ServerConfigAsr.yatingApiKey) }
 
-    // 4. TTS Settings State
     var isTtsEnabled by remember { mutableStateOf(TtsConfig.isEnabled) }
     var selectedVoiceName by remember { mutableStateOf(TtsConfig.currentVoiceName) }
     var isVoiceDropdownExpanded by remember { mutableStateOf(false) }
 
-    // 5. UI State
     var tempShowManualInput by remember { mutableStateOf(initialShowManualInput) }
     val scrollState = rememberScrollState()
 
@@ -128,38 +145,87 @@ fun SettingsDialog(
 
                 adviceProviders.forEach { provider ->
                     val isThisSelected = selectedAdviceProvider.name == provider.name
+                    val isManualOption = provider.name == isManualAdviceName
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { selectedAdviceProvider = provider }
-                            .padding(vertical = 4.dp)
-                    ) {
-                        RadioButton(
-                            selected = isThisSelected,
-                            onClick = { selectedAdviceProvider = provider }
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(text = provider.name, style = MaterialTheme.typography.bodyMedium)
-                            if (provider.name != isManualAdviceName) {
-                                Text(text = provider.baseUrl, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            }
-                        }
-                    }
-
-                    if (provider.name == isManualAdviceName && isThisSelected) {
-                        OutlinedTextField(
-                            value = customAdviceUrl,
-                            onValueChange = { customAdviceUrl = it },
-                            label = { Text("API URL (v1/)") },
-                            placeholder = { Text("https://your-url.com/v1/") },
+                    Column {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(start = 32.dp, bottom = 8.dp),
-                            singleLine = true
-                        )
+                                .clickable { selectedAdviceProvider = provider }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            RadioButton(
+                                selected = isThisSelected,
+                                onClick = { selectedAdviceProvider = provider }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(text = provider.name, style = MaterialTheme.typography.bodyMedium)
+                                if (!isManualOption) {
+                                    Text(text = provider.baseUrl, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                }
+                            }
+                        }
+
+                        if (isManualOption && isThisSelected) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 32.dp, bottom = 8.dp)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                    .padding(8.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = manualAdviceUrl,
+                                    onValueChange = { manualAdviceUrl = it },
+                                    label = { Text("API URL (Full Endpoint)") },
+                                    placeholder = { Text("https://api.openai.com/v1/chat/completions") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.bodyMedium
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                OutlinedTextField(
+                                    value = manualAdviceKey,
+                                    onValueChange = { manualAdviceKey = it },
+                                    label = { Text("API Key") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.bodyMedium
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Checkbox(
+                                        checked = manualAdviceUseAuth,
+                                        onCheckedChange = { manualAdviceUseAuth = it }
+                                    )
+                                    Text("Bearer Auth Header", style = MaterialTheme.typography.bodySmall)
+                                }
+
+                                // --- CHANGED: Always show JSON input, removed Switch and Standard inputs ---
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "JSON Body Template (Use {{TEXT}} for transcription):",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                OutlinedTextField(
+                                    value = manualRawTemplate,
+                                    onValueChange = { manualRawTemplate = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    minLines = 6,
+                                    maxLines = 15,
+                                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                    placeholder = { Text("{\n  \"model\": \"gpt-4o\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"{{TEXT}}\"}]\n}") }
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -186,7 +252,6 @@ fun SettingsDialog(
                     }
                 }
 
-                // Show API Key field only if Yating is selected
                 if (selectedAsrProvider.id == "yating") {
                     OutlinedTextField(
                         value = yatingApiKey,
@@ -202,7 +267,7 @@ fun SettingsDialog(
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
-                // --- SECTION 4: Text-to-Speech Settings ---
+                // --- SECTION 4: TTS Settings ---
                 Text("4. 語音警示設定 (TTS)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -283,13 +348,37 @@ fun SettingsDialog(
         confirmButton = {
             Button(onClick = {
                 val finalUrl = if (isCustomSelected) customUrl else selectedOption
+
                 val finalAdviceProvider = if (selectedAdviceProvider.name == isManualAdviceName) {
-                    selectedAdviceProvider.copy(baseUrl = customAdviceUrl)
+                    // Create a completely custom provider based on inputs
+                    selectedAdviceProvider.copy(
+                        baseUrl = manualAdviceUrl,
+                        apiKey = manualAdviceKey,
+                        useAuthHeader = manualAdviceUseAuth,
+
+                        // --- CHANGED: Force Raw Mode to TRUE and set empty defaults for unused fields ---
+                        isRawJsonMode = true,
+                        rawJsonTemplate = manualRawTemplate,
+
+                        // Fill required fields with dummy values since Raw Mode doesn't use them
+                        modelId = "",
+                        systemPrompt = "",
+                        supportsReasoning = false
+                    )
                 } else {
                     selectedAdviceProvider
                 }
+
                 if (finalUrl.isNotBlank()) {
-                    onConfirm(finalUrl, tempShowManualInput, finalAdviceProvider, selectedAsrProvider, yatingApiKey, isTtsEnabled, selectedVoiceName)
+                    onConfirm(
+                        finalUrl,
+                        tempShowManualInput,
+                        finalAdviceProvider,
+                        selectedAsrProvider,
+                        yatingApiKey,
+                        isTtsEnabled,
+                        selectedVoiceName
+                    )
                 }
             }) { Text("確定") }
         },
@@ -299,8 +388,10 @@ fun SettingsDialog(
     )
 }
 
+// RiskLevelMeter and TranscriptionItem can remain unchanged below...
 @Composable
 fun RiskLevelMeter(score: Int, highestRiskAdvice: String?, isLoading: Boolean) {
+    // ... (Use the code from your previous file)
     val animatedProgress by animateFloatAsState(targetValue = score / 100f, label = "riskProgress")
     val (color, label, iconId) = when {
         score > 70 -> Triple(MaterialTheme.colorScheme.error, "高度危險", android.R.drawable.ic_dialog_alert)
@@ -350,7 +441,6 @@ fun RiskLevelMeter(score: Int, highestRiskAdvice: String?, isLoading: Boolean) {
     }
 }
 
-// --- UPDATED: TranscriptionItem ---
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TranscriptionItem(
@@ -361,25 +451,24 @@ fun TranscriptionItem(
     onUpdate: (String) -> Unit,
     onDelete: () -> Unit
 ) {
+    // ... (Paste your TranscriptionItem code here, it is unchanged)
     var isEditing by remember { mutableStateOf(false) }
     var editedText by remember(transcription.id) { mutableStateOf(transcription.text) }
 
     val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
     val borderWidth = if (isSelected) 2.dp else 0.dp
 
-    // --- NEW: Dynamic Background Color based on Risk ---
     val cardBackgroundColor = if (isSelected) {
         MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
     } else {
         val score = transcription.riskScore ?: 0
         when {
-            score > 70 -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f) // High Risk (Red-ish)
-            score >= 50 -> Color(0xFFFFF9C4) // Medium Risk (Light Yellow)
-            else -> MaterialTheme.colorScheme.surfaceContainerLow // Default
+            score > 70 -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)
+            score >= 50 -> Color(0xFFFFF9C4)
+            else -> MaterialTheme.colorScheme.surfaceContainerLow
         }
     }
 
-    // --- NEW: Timestamp Formatter ---
     val timestampStr = remember(transcription.timestamp) {
         SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(transcription.timestamp))
     }
@@ -393,7 +482,6 @@ fun TranscriptionItem(
         colors = CardDefaults.cardColors(containerColor = cardBackgroundColor)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            // Header: Selection + Timestamp + Risk Badge
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isSelectionMode) {
                     Checkbox(
@@ -404,7 +492,6 @@ fun TranscriptionItem(
                     Spacer(modifier = Modifier.width(8.dp))
                 }
 
-                // --- NEW: Display Timestamp ---
                 Text(
                     text = timestampStr,
                     style = MaterialTheme.typography.labelSmall,

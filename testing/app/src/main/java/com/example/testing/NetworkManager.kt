@@ -1,10 +1,13 @@
 package com.example.testing
 
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody
+import okhttp3.ResponseBody
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.Header
+import retrofit2.http.HeaderMap
 import retrofit2.http.POST
 import retrofit2.http.Url
 import java.util.concurrent.TimeUnit
@@ -20,7 +23,7 @@ data class ScamCheckResponse(
 )
 
 data class AdviceResponse(
-    val choices: List<Choice>
+    val choices: List<Choice>? = null // Made nullable for raw handling
 )
 
 data class Choice(
@@ -65,9 +68,8 @@ object ServerConfigAsr {
     var yatingApiKey: String = ""
 }
 
-// --- NEW: TTS Configuration ---
+// --- TTS Configuration ---
 object TtsConfig {
-    // UPDATED: Defaults to FALSE (closed)
     var isEnabled: Boolean = false
     var currentVoiceName: String = ""
 }
@@ -80,6 +82,14 @@ interface ApiServiceSlow {
         @Header("Authorization") auth: String?,
         @Body request: OpenAIRequest
     ): AdviceResponse
+
+    // --- NEW: Raw JSON Handler ---
+    @POST
+    suspend fun getRawAdvice(
+        @Url url: String,
+        @HeaderMap headers: Map<String, String>,
+        @Body request: RequestBody
+    ): ResponseBody
 }
 
 interface ApiServiceFast {
@@ -89,13 +99,17 @@ interface ApiServiceFast {
 
 // 3. Server Configuration
 
+// --- UPDATED: Added isRawJsonMode and rawJsonTemplate ---
 data class AdviceProvider(
     val name: String,
     val baseUrl: String,
     val apiKey: String,
     val modelId: String,
     val useAuthHeader: Boolean,
-    val supportsReasoning: Boolean
+    val supportsReasoning: Boolean,
+    val systemPrompt: String,
+    val isRawJsonMode: Boolean = false,    // NEW
+    val rawJsonTemplate: String = ""       // NEW
 )
 
 object ServerConfig {
@@ -130,7 +144,18 @@ object RetrofitClientFast {
 }
 
 object ServerConfigAdvice {
-    const val MANUAL_PROVIDER_NAME = "Manual Input (Qwen)"
+    const val MANUAL_PROVIDER_NAME = "Manual Input (Custom)"
+
+    private const val DEFAULT_PROMPT = "根據以下電話內容，解釋為甚麼這段訊息有可能是詐騙，一句話即可，若資訊不足，請回覆為甚麼無法判斷。"
+
+    // Default Raw Template for Developers
+    const val DEFAULT_RAW_TEMPLATE = """{
+  "model": "gpt-4o",
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "{{TEXT}}"}
+  ]
+}"""
 
     val PROVIDERS = listOf(
         AdviceProvider(
@@ -139,7 +164,8 @@ object ServerConfigAdvice {
             apiKey = "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",
             modelId = "x-ai/grok-4.1-fast:free",
             useAuthHeader = true,
-            supportsReasoning = true
+            supportsReasoning = true,
+            systemPrompt = DEFAULT_PROMPT
         ),
         AdviceProvider(
             name = "OpenRouter (Chimera)",
@@ -147,7 +173,8 @@ object ServerConfigAdvice {
             apiKey = "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",
             modelId = "tngtech/tng-r1t-chimera:free",
             useAuthHeader = true,
-            supportsReasoning = false
+            supportsReasoning = false,
+            systemPrompt = DEFAULT_PROMPT
         ),
         AdviceProvider(
             name = "Local (Qwen)",
@@ -155,7 +182,8 @@ object ServerConfigAdvice {
             apiKey = "7a4c019c-db87-4e21-b90e-9cfc75057f7e",
             modelId = "qwen/qwen3-30b-a3b-2507",
             useAuthHeader = false,
-            supportsReasoning = false
+            supportsReasoning = false,
+            systemPrompt = DEFAULT_PROMPT
         ),
         AdviceProvider(
             name = "Local (Qwen - Backup)",
@@ -163,15 +191,19 @@ object ServerConfigAdvice {
             apiKey = "7a4c019c-db87-4e21-b90e-9cfc75057f7e",
             modelId = "qwen/qwen3-30b-a3b-2507",
             useAuthHeader = false,
-            supportsReasoning = false
+            supportsReasoning = false,
+            systemPrompt = DEFAULT_PROMPT
         ),
         AdviceProvider(
             name = MANUAL_PROVIDER_NAME,
             baseUrl = "",
-            apiKey = "7a4c019c-db87-4e21-b90e-9cfc75057f7e",
-            modelId = "qwen/qwen3-30b-a3b-2507",
-            useAuthHeader = false,
-            supportsReasoning = false
+            apiKey = "",
+            modelId = "",
+            useAuthHeader = true,
+            supportsReasoning = false,
+            systemPrompt = DEFAULT_PROMPT,
+            isRawJsonMode = false,
+            rawJsonTemplate = DEFAULT_RAW_TEMPLATE
         )
     )
 
@@ -201,7 +233,7 @@ object RetrofitClientSlow {
             messages = listOf(
                 Message(
                     role = "system",
-                    content = "根據以下電話內容，解釋為甚麼這段訊息有可能是詐騙，一句話即可，若資訊不足，請回覆為甚麼無法判斷。"
+                    content = provider.systemPrompt
                 ),
                 Message(
                     role = "user",
@@ -213,7 +245,7 @@ object RetrofitClientSlow {
     }
 
     fun rebuild() {
-        val url = "https://google.com/"
+        val url = "https://google.com/" // Dummy base URL
         apiService = Retrofit.Builder()
             .baseUrl(url)
             .client(client)
@@ -230,15 +262,8 @@ object RetrofitClientSlow {
     ) {
         ServerConfig.currentBaseUrl = newFastUrl
         RetrofitClientFast.rebuild()
-
         ServerConfigAdvice.currentProvider = newAdviceProvider
-
         ServerConfigAsr.currentProvider = newAsrProvider
         ServerConfigAsr.yatingApiKey = newYatingKey
-    }
-
-    fun updateUrl(newUrl: String) {
-        ServerConfig.currentBaseUrl = newUrl
-        RetrofitClientFast.rebuild()
     }
 }

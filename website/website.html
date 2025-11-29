@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" class="scroll-smooth">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ZeroSCAM - AI防騙助手</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+
+    <script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['"Noto Sans TC"', "sans-serif"],
+            },
+            colors: {
+              brand: {
+                50: "#eff6ff",
+                100: "#dbeafe",
+                500: "#3b82f6",
+                600: "#2563eb",
+                700: "#1d4ed8",
+                800: "#1e40af",
+                900: "#1e3a8a",
+              },
+              dark: {
+                bg: "#0f172a",
+                card: "#1e293b",
+                border: "#334155",
+              },
+            },
+            animation: {
+              "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+              "bounce-audio": "bounceAudio 1s infinite ease-in-out",
+            },
+            keyframes: {
+              bounceAudio: {
+                "0%, 100%": { height: "10%", opacity: "0.5" },
+                "50%": { height: "80%", opacity: "1" },
+              },
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+
+      .fade-in-section {
+        opacity: 0;
+        transform: translateY(20px);
+        transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+        will-change: opacity, visibility;
+      }
+      .fade-in-section.is-visible {
+        opacity: 1;
+        transform: none;
+      }
+
+      .phone-frame {
+        border: 12px solid #1f2937;
+        border-radius: 2.5rem;
+        overflow: hidden;
+        position: relative;
+        background: #000;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        transition: border-color 0.3s;
+      }
+      .dark .phone-frame {
+        border-color: #374151;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+      }
+
+      .phone-notch {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 40%;
+        height: 25px;
+        background: #1f2937;
+        border-bottom-left-radius: 12px;
+        border-bottom-right-radius: 12px;
+        z-index: 20;
+        transition: background-color 0.3s;
+      }
+      .dark .phone-notch {
+        background: #374151;
+      }
+    </style>
+  </head>
+  <body
+    class="font-sans text-gray-800 bg-gray-50 dark:bg-dark-bg dark:text-gray-200 antialiased overflow-x-hidden transition-colors duration-300"
+  >
+    <nav
+      class="fixed w-full z-50 bg-white/90 dark:bg-dark-bg/90 backdrop-blur-md shadow-sm dark:shadow-slate-800/50 transition-all duration-300"
+      id="navbar"
+    >
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex justify-between items-center h-20">
+          <div
+            class="flex-shrink-0 flex items-center gap-3 cursor-pointer"
+            onclick="window.scrollTo(0,0)"
+          >
+            <img
+              src="icon.png"
+              alt="ZeroSCAM Icon"
+              class="w-10 h-10 rounded-xl shadow-md"
+            />
+            <span
+              class="font-bold text-2xl text-gray-900 dark:text-white tracking-tight"
+              >ZeroSCAM</span
+            >
+          </div>
+
+          <div class="hidden md:flex items-center space-x-8">
+            <a
+              href="#features"
+              class="text-gray-600 dark:text-gray-300 hover:text-brand-600 dark:hover:text-brand-400 font-medium transition"
+              >核心功能</a
+            >
+            <a
+              href="#technology"
+              class="text-gray-600 dark:text-gray-300 hover:text-brand-600 dark:hover:text-brand-400 font-medium transition"
+              >運作原理</a
+            >
+            <a
+              href="#screenshots"
+              class="text-gray-600 dark:text-gray-300 hover:text-brand-600 dark:hover:text-brand-400 font-medium transition"
+              >介面預覽</a
+            >
+            <a
+              href="#faq"
+              class="text-gray-600 dark:text-gray-300 hover:text-brand-600 dark:hover:text-brand-400 font-medium transition"
+              >常見問題</a
+            >
+
+            <button
+              id="theme-toggle"
+              class="p-2 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-yellow-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition focus:outline-none"
+            >
+              <i class="fa-solid fa-moon dark:hidden"></i>
+              <i class="fa-solid fa-sun hidden dark:inline-block"></i>
+            </button>
+
+            <a
+              href="app-release.apk"
+              class="bg-brand-600 text-white px-5 py-2 rounded-full hover:bg-brand-700 transition shadow-lg shadow-brand-500/30"
+            >
+              下載 APP
+            </a>
+          </div>
+
+          <div class="md:hidden flex items-center gap-4">
+            <button
+              id="mobile-theme-toggle"
+              class="p-2 rounded-lg text-gray-500 dark:text-yellow-400 focus:outline-none"
+            >
+              <i class="fa-solid fa-moon dark:hidden"></i>
+              <i class="fa-solid fa-sun hidden dark:inline-block"></i>
+            </button>
+            <button
+              id="mobile-menu-btn"
+              class="text-gray-600 dark:text-gray-300 hover:text-brand-600 focus:outline-none text-2xl"
+            >
+              <i class="fa-solid fa-bars"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div
+        id="mobile-menu"
+        class="hidden md:hidden bg-white dark:bg-dark-card border-t border-gray-100 dark:border-gray-700 absolute w-full shadow-lg"
+      >
+        <div class="px-2 pt-2 pb-3 space-y-1 sm:px-3">
+          <a
+            href="#features"
+            class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 dark:text-gray-200 hover:text-brand-600 hover:bg-gray-50 dark:hover:bg-gray-800"
+            >核心功能</a
+          >
+          <a
+            href="#technology"
+            class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 dark:text-gray-200 hover:text-brand-600 hover:bg-gray-50 dark:hover:bg-gray-800"
+            >運作原理</a
+          >
+          <a
+            href="app-release.apk"
+            class="block px-3 py-2 rounded-md text-base font-medium text-brand-600 dark:text-brand-400 font-bold"
+            >立即下載</a
+          >
+        </div>
+      </div>
+    </nav>
+
+    <section
+      class="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden bg-gradient-to-br from-brand-50 to-white dark:from-dark-bg dark:to-gray-900 transition-colors duration-300"
+    >
+      <div
+        class="absolute top-0 right-0 -mr-20 -mt-20 w-96 h-96 rounded-full bg-brand-200 dark:bg-brand-900 opacity-30 dark:opacity-20 blur-3xl"
+      ></div>
+      <div
+        class="absolute bottom-0 left-0 -ml-20 -mb-20 w-80 h-80 rounded-full bg-purple-200 dark:bg-purple-900 opacity-30 dark:opacity-20 blur-3xl"
+      ></div>
+
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+          <div class="text-center lg:text-left fade-in-section">
+            <div
+              class="inline-block px-4 py-1.5 bg-brand-100 dark:bg-brand-900/50 text-brand-700 dark:text-brand-300 rounded-full text-sm font-semibold mb-6 border border-brand-200 dark:border-brand-800"
+            >
+              🚀 2025 年度最佳防詐工具
+            </div>
+            <h1
+              class="text-4xl md:text-6xl font-extrabold text-gray-900 dark:text-white leading-tight mb-6"
+            >
+              讓詐騙來電 <br />
+              <span class="text-brand-600 dark:text-brand-400">無處躲藏</span>
+            </h1>
+            <p
+              class="text-lg text-gray-600 dark:text-gray-400 mb-8 max-w-lg mx-auto lg:mx-0"
+            >
+              結合先進的 BERT 本地模型與 LLM
+              雲端大腦，即時分析通話內容，為您的財產安全築起雙重防線。
+            </p>
+
+            <div
+              class="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start"
+              id="download-area"
+            >
+              <a
+                href="app-release.apk"
+                class="flex items-center justify-center bg-gray-900 dark:bg-brand-600 text-white px-6 py-3 rounded-xl hover:bg-gray-800 dark:hover:bg-brand-500 transition shadow-lg transform hover:-translate-y-1 group"
+              >
+                <i
+                  class="fa-brands fa-android text-2xl mr-3 group-hover:scale-110 transition-transform"
+                ></i>
+                <div class="text-left">
+                  <div class="text-xs text-gray-300 dark:text-brand-100">
+                    Android 安裝檔
+                  </div>
+                  <div class="text-lg font-bold font-sans">立即下載</div>
+                </div>
+              </a>
+            </div>
+
+            <div
+              class="mt-6 flex items-center justify-center lg:justify-start gap-4 text-sm text-gray-500 dark:text-gray-400"
+            >
+              <div class="flex items-center">
+                <i class="fa-solid fa-star text-yellow-400 mr-1"></i>
+                <span>5.0 評分</span>
+              </div>
+              <span>•</span>
+              <div>高雄大學開發團隊</div>
+            </div>
+          </div>
+
+          <div
+            class="hidden lg:flex justify-center items-center fade-in-section"
+            style="transition-delay: 100ms"
+          >
+            <div class="relative w-72 h-72">
+              <img
+                src="icon.png"
+                class="w-64 h-64 rounded-[3rem] shadow-2xl shadow-brand-500/20 animate-pulse-slow"
+                alt="App Icon"
+              />
+              <div
+                class="absolute -bottom-4 -right-4 bg-white dark:bg-dark-card p-4 rounded-2xl shadow-xl flex items-center gap-3 animate-bounce"
+              >
+                <div
+                  class="bg-green-100 dark:bg-green-900/30 p-2 rounded-full text-green-600 dark:text-green-400"
+                >
+                  <i class="fa-solid fa-shield-check"></i>
+                </div>
+                <div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400">
+                    系統狀態
+                  </div>
+                  <div class="font-bold text-gray-900 dark:text-white">
+                    即時保護中
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section
+      id="features"
+      class="py-20 bg-white dark:bg-dark-bg transition-colors duration-300"
+    >
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center max-w-3xl mx-auto mb-16 fade-in-section">
+          <h2
+            class="text-brand-600 dark:text-brand-400 font-semibold tracking-wide uppercase text-sm mb-2"
+          >
+            全面防護
+          </h2>
+          <h3
+            class="text-3xl font-bold text-gray-900 dark:text-white sm:text-4xl"
+          >
+            強大的六大核心功能
+          </h3>
+          <p class="mt-4 text-xl text-gray-500 dark:text-gray-400">
+            不只是錄音，我們提供全方位的 AI 防詐解決方案。
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div
+            class="bg-gray-50 dark:bg-dark-card border border-transparent dark:border-dark-border rounded-2xl p-8 hover:shadow-xl dark:hover:shadow-brand-900/20 transition duration-300 fade-in-section"
+          >
+            <div
+              class="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl flex items-center justify-center text-xl mb-6"
+            >
+              <i class="fa-solid fa-ear-listen"></i>
+            </div>
+            <h4 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
+              雙引擎語音轉錄
+            </h4>
+            <p class="text-gray-600 dark:text-gray-400 leading-relaxed text-sm">
+              整合 Google
+              原生語音識別與台灣在地化「雅婷逐字稿」(Yating)，精準識別中文與台語混雜的對話內容。
+            </p>
+          </div>
+
+          <div
+            class="bg-gray-50 dark:bg-dark-card border border-transparent dark:border-dark-border rounded-2xl p-8 hover:shadow-xl dark:hover:shadow-brand-900/20 transition duration-300 fade-in-section"
+            style="transition-delay: 100ms"
+          >
+            <div
+              class="w-12 h-12 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl flex items-center justify-center text-xl mb-6"
+            >
+              <i class="fa-solid fa-bolt"></i>
+            </div>
+            <h4 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
+              即時風險偵測
+            </h4>
+            <p class="text-gray-600 dark:text-gray-400 leading-relaxed text-sm">
+              搭載本地輕量化 BERT
+              模型，以毫秒級速度計算詐騙機率。一旦偵測到高風險關鍵字，立即觸發紅色警示。
+            </p>
+          </div>
+
+          <div
+            class="bg-gray-50 dark:bg-dark-card border border-transparent dark:border-dark-border rounded-2xl p-8 hover:shadow-xl dark:hover:shadow-brand-900/20 transition duration-300 fade-in-section"
+            style="transition-delay: 200ms"
+          >
+            <div
+              class="w-12 h-12 bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-xl flex items-center justify-center text-xl mb-6"
+            >
+              <i class="fa-solid fa-robot"></i>
+            </div>
+            <h4 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
+              生成式 AI 建議
+            </h4>
+            <p class="text-gray-600 dark:text-gray-400 leading-relaxed text-sm">
+              連接 GPT-4o 或 Qwen
+              大語言模型，不僅告訴你有危險，還能分析詐騙邏輯並教你如何反擊或掛斷。
+            </p>
+          </div>
+
+          <div
+            class="bg-gray-50 dark:bg-dark-card border border-transparent dark:border-dark-border rounded-2xl p-8 hover:shadow-xl dark:hover:shadow-brand-900/20 transition duration-300 fade-in-section"
+            style="transition-delay: 300ms"
+          >
+            <div
+              class="w-12 h-12 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 rounded-xl flex items-center justify-center text-xl mb-6"
+            >
+              <i class="fa-solid fa-volume-high"></i>
+            </div>
+            <h4 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
+              語音警示廣播
+            </h4>
+            <p class="text-gray-600 dark:text-gray-400 leading-relaxed text-sm">
+              專為長者設計。當風險極高時，APP
+              會透過語音大聲朗讀：「注意！偵測到高風險詐騙內容」，即時打斷對話。
+            </p>
+          </div>
+
+          <div
+            class="bg-gray-50 dark:bg-dark-card border border-transparent dark:border-dark-border rounded-2xl p-8 hover:shadow-xl dark:hover:shadow-brand-900/20 transition duration-300 fade-in-section"
+            style="transition-delay: 400ms"
+          >
+            <div
+              class="w-12 h-12 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 rounded-xl flex items-center justify-center text-xl mb-6"
+            >
+              <i class="fa-solid fa-clock-rotate-left"></i>
+            </div>
+            <h4 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
+              歷史紀錄存證
+            </h4>
+            <p class="text-gray-600 dark:text-gray-400 leading-relaxed text-sm">
+              自動將可疑通話的文字稿存入本地加密資料庫 (Room
+              DB)。您可以隨時查看、編輯或匯出紀錄作為報案證據。
+            </p>
+          </div>
+
+          <div
+            class="bg-gray-50 dark:bg-dark-card border border-transparent dark:border-dark-border rounded-2xl p-8 hover:shadow-xl dark:hover:shadow-brand-900/20 transition duration-300 fade-in-section"
+            style="transition-delay: 500ms"
+          >
+            <div
+              class="w-12 h-12 bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-xl flex items-center justify-center text-xl mb-6"
+            >
+              <i class="fa-solid fa-sliders"></i>
+            </div>
+            <h4 class="text-xl font-bold text-gray-900 dark:text-white mb-3">
+              開發者自訂模式
+            </h4>
+            <p class="text-gray-600 dark:text-gray-400 leading-relaxed text-sm">
+              針對進階用戶，開放自訂 API 端點與 JSON 模板。您可以切換不同的 AI
+              模型或連接至私有伺服器，彈性極高。
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section
+      id="technology"
+      class="py-20 bg-gray-50 dark:bg-gray-900 transition-colors duration-300 border-t border-gray-200 dark:border-gray-800"
+    >
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+          <div class="fade-in-section">
+            <h3 class="text-3xl font-bold text-gray-900 dark:text-white mb-6">
+              雙層防護架構：快慢結合
+            </h3>
+            <p class="text-gray-600 dark:text-gray-400 mb-8 leading-relaxed">
+              我們獨創的「快慢雙層架構」解決了即時性與準確性的矛盾。確保在通話進行時，能同時獲得毫秒級的反應與深度的
+              AI 分析。
+            </p>
+
+            <div class="space-y-8">
+              <div class="flex gap-4">
+                <div
+                  class="flex-shrink-0 w-10 h-10 rounded-full bg-brand-100 dark:bg-brand-900 flex items-center justify-center text-brand-600 dark:text-brand-400 font-bold"
+                >
+                  01
+                </div>
+                <div>
+                  <h4 class="text-lg font-bold text-gray-900 dark:text-white">
+                    第一層：極速攔截 (Fast Layer)
+                  </h4>
+                  <p class="text-gray-600 dark:text-gray-400 text-sm mt-1">
+                    使用微調過的 BERT
+                    模型進行語意分類。無需等待生成，0.5秒內即可判斷是否為詐騙話術並給出風險分數。
+                  </p>
+                  <div class="mt-2 flex gap-2">
+                    <span
+                      class="px-2 py-1 bg-gray-200 dark:bg-gray-800 rounded text-xs text-gray-600 dark:text-gray-300"
+                      >Retrofit Fast</span
+                    >
+                    <span
+                      class="px-2 py-1 bg-gray-200 dark:bg-gray-800 rounded text-xs text-gray-600 dark:text-gray-300"
+                      >Python Backend</span
+                    >
+                  </div>
+                </div>
+              </div>
+
+              <div class="flex gap-4">
+                <div
+                  class="flex-shrink-0 w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900 flex items-center justify-center text-purple-600 dark:text-purple-400 font-bold"
+                >
+                  02
+                </div>
+                <div>
+                  <h4 class="text-lg font-bold text-gray-900 dark:text-white">
+                    第二層：深度推理 (Slow Layer)
+                  </h4>
+                  <p class="text-gray-600 dark:text-gray-400 text-sm mt-1">
+                    當第一層偵測到危險時，系統自動將上下文發送至大型語言模型
+                    (LLM)。AI 會像真人專家一樣思考，生成具體的防騙策略。
+                  </p>
+                  <div class="mt-2 flex gap-2">
+                    <span
+                      class="px-2 py-1 bg-gray-200 dark:bg-gray-800 rounded text-xs text-gray-600 dark:text-gray-300"
+                      >OpenAI / Qwen</span
+                    >
+                    <span
+                      class="px-2 py-1 bg-gray-200 dark:bg-gray-800 rounded text-xs text-gray-600 dark:text-gray-300"
+                      >Chain of Thought</span
+                    >
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="relative fade-in-section rounded-3xl bg-white dark:bg-dark-card p-8 border border-gray-100 dark:border-gray-700 shadow-lg"
+          >
+            <div class="space-y-4">
+              <div
+                class="flex items-center justify-center p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-dashed border-gray-300 dark:border-gray-600"
+              >
+                <span class="mr-2"
+                  ><i class="fa-solid fa-mobile-screen"></i
+                ></span>
+                <span class="text-gray-700 dark:text-gray-200 font-mono text-sm"
+                  >用戶 App (Kotlin)</span
+                >
+              </div>
+              <div class="flex justify-center">
+                <i class="fa-solid fa-arrow-down text-gray-400"></i>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div
+                  class="p-4 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-100 dark:border-red-800 text-center"
+                >
+                  <div
+                    class="text-red-600 dark:text-red-400 font-bold text-sm mb-1"
+                  >
+                    Fast API
+                  </div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400">
+                    BERT Model<br />風險評分
+                  </div>
+                </div>
+                <div
+                  class="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-100 dark:border-purple-800 text-center"
+                >
+                  <div
+                    class="text-purple-600 dark:text-purple-400 font-bold text-sm mb-1"
+                  >
+                    Slow API
+                  </div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400">
+                    LLM Engine<br />生成建議
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section
+      class="bg-brand-900 dark:bg-gray-900 text-white py-16 border-t border-brand-800 dark:border-gray-800"
+    >
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+          <div class="fade-in-section">
+            <div class="text-4xl md:text-5xl font-bold mb-2 text-brand-200">
+              99%
+            </div>
+            <div class="text-brand-100 dark:text-gray-400">識別準確率</div>
+          </div>
+          <div class="fade-in-section" style="transition-delay: 100ms">
+            <div class="text-4xl md:text-5xl font-bold mb-2 text-brand-200">
+              0.5s
+            </div>
+            <div class="text-brand-100 dark:text-gray-400">平均反應時間</div>
+          </div>
+          <div class="fade-in-section" style="transition-delay: 200ms">
+            <div class="text-4xl md:text-5xl font-bold mb-2 text-brand-200">
+              24hr
+            </div>
+            <div class="text-brand-100 dark:text-gray-400">全天候守護</div>
+          </div>
+          <div class="fade-in-section" style="transition-delay: 300ms">
+            <div class="text-4xl md:text-5xl font-bold mb-2 text-brand-200">
+              100%
+            </div>
+            <div class="text-brand-100 dark:text-gray-400">免費使用</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section
+      id="screenshots"
+      class="py-20 bg-white dark:bg-dark-bg overflow-hidden transition-colors duration-300"
+    >
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center mb-16 fade-in-section">
+          <h3 class="text-3xl font-bold text-gray-900 dark:text-white">
+            實際操作介面
+          </h3>
+          <p class="mt-4 text-gray-500 dark:text-gray-400">
+            簡潔直觀的設計，讓年長者也能輕鬆使用。
+          </p>
+        </div>
+
+        <div
+          class="relative flex justify-center fade-in-section"
+          style="transition-delay: 200ms"
+        >
+          <div
+            class="phone-frame w-[320px] h-[650px] bg-white dark:bg-gray-900 transition-colors duration-300"
+          >
+            <div class="phone-notch"></div>
+
+            <div class="w-full h-full flex flex-col font-sans">
+              <div
+                class="pt-10 pb-4 px-4 flex justify-between items-center bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700"
+              >
+                <i
+                  class="fa-solid fa-gear text-brand-600 dark:text-brand-400 text-xl"
+                ></i>
+                <span class="font-bold text-gray-800 dark:text-white"
+                  >即時監測中</span
+                >
+                <div
+                  class="w-2 h-2 rounded-full bg-green-500 animate-pulse"
+                ></div>
+              </div>
+
+              <div
+                class="flex-1 p-4 flex flex-col overflow-hidden relative bg-white dark:bg-gray-900"
+              >
+                <div
+                  class="h-16 flex items-center justify-center gap-1 mb-6 mt-4"
+                >
+                  <div
+                    class="w-1.5 bg-brand-500 rounded-full animate-bounce-audio"
+                    style="animation-delay: 0.1s"
+                  ></div>
+                  <div
+                    class="w-1.5 bg-brand-500 rounded-full animate-bounce-audio"
+                    style="animation-delay: 0.3s"
+                  ></div>
+                  <div
+                    class="w-1.5 bg-brand-500 rounded-full animate-bounce-audio"
+                    style="animation-delay: 0.5s"
+                  ></div>
+                  <div
+                    class="w-1.5 bg-red-500 rounded-full animate-bounce-audio h-10"
+                    style="animation-delay: 0.2s"
+                  ></div>
+                  <div
+                    class="w-1.5 bg-brand-500 rounded-full animate-bounce-audio"
+                    style="animation-delay: 0.4s"
+                  ></div>
+                  <div
+                    class="w-1.5 bg-brand-500 rounded-full animate-bounce-audio"
+                    style="animation-delay: 0.1s"
+                  ></div>
+                </div>
+
+                <div class="text-center mb-6">
+                  <p
+                    class="text-xl font-medium text-gray-800 dark:text-gray-200"
+                  >
+                    "你的帳戶涉及洗錢案件..."
+                  </p>
+                  <p class="text-sm text-gray-400 mt-2">正在聆聽...</p>
+                </div>
+
+                <div
+                  class="bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800/50 rounded-2xl p-4 shadow-sm mb-4"
+                >
+                  <div class="flex justify-between items-center mb-2">
+                    <div
+                      class="flex items-center text-red-600 dark:text-red-400 font-bold"
+                    >
+                      <i class="fa-solid fa-triangle-exclamation mr-2"></i>
+                      高度危險
+                    </div>
+                    <span
+                      class="text-2xl font-black text-red-600 dark:text-red-400"
+                      >85%</span
+                    >
+                  </div>
+                  <div
+                    class="w-full bg-gray-200 dark:bg-gray-700 h-2 rounded-full overflow-hidden mb-3"
+                  >
+                    <div class="h-full bg-red-500 w-[85%]"></div>
+                  </div>
+                  <div
+                    class="mt-3 pt-3 border-t border-red-200 dark:border-red-800/30"
+                  >
+                    <p
+                      class="text-xs font-bold text-red-700 dark:text-red-300 mb-1"
+                    >
+                      AI 防騙建議：
+                    </p>
+                    <p
+                      class="text-sm text-gray-700 dark:text-gray-300 leading-snug"
+                    >
+                      這是典型的「假冒公務員」詐騙。警察或檢察官絕對不會透過電話要求轉帳監管。請立即掛斷！
+                    </p>
+                  </div>
+                </div>
+
+                <div class="mt-auto flex justify-center pb-8">
+                  <button
+                    class="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center text-red-600 dark:text-red-400 shadow-lg border-4 border-white dark:border-gray-800"
+                  >
+                    <i class="fa-solid fa-stop text-xl"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section
+      id="reviews"
+      class="py-20 bg-gray-50 dark:bg-dark-bg transition-colors duration-300"
+    >
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <h3
+          class="text-3xl font-bold text-center text-gray-900 dark:text-white mb-16 fade-in-section"
+        >
+          使用者評價
+        </h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div
+            class="bg-white dark:bg-dark-card p-6 rounded-2xl shadow-sm hover:shadow-md transition fade-in-section"
+          >
+            <div class="flex text-yellow-400 mb-4 text-sm">
+              <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i
+              ><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i
+              ><i class="fa-solid fa-star"></i>
+            </div>
+            <p class="text-gray-700 dark:text-gray-300 italic mb-6 text-sm">
+              "真的幫我擋下了一通假冒網購退款的電話，即時警示很有效！"
+            </p>
+            <div class="flex items-center">
+              <div
+                class="w-10 h-10 bg-brand-100 dark:bg-brand-900 rounded-full flex items-center justify-center text-brand-600 font-bold mr-3"
+              >
+                朱
+              </div>
+              <div>
+                <div class="font-bold text-gray-900 dark:text-white text-sm">
+                  朱俊傑
+                </div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">
+                  工程師
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="bg-white dark:bg-dark-card p-6 rounded-2xl shadow-sm hover:shadow-md transition fade-in-section"
+            style="transition-delay: 100ms"
+          >
+            <div class="flex text-yellow-400 mb-4 text-sm">
+              <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i
+              ><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i
+              ><i class="fa-solid fa-star"></i>
+            </div>
+            <p class="text-gray-700 dark:text-gray-300 italic mb-6 text-sm">
+              "介面清楚，長輩也看得懂紅色的危險警告，很安心。"
+            </p>
+            <div class="flex items-center">
+              <div
+                class="w-10 h-10 bg-purple-100 dark:bg-purple-900 rounded-full flex items-center justify-center text-purple-600 font-bold mr-3"
+              >
+                曾
+              </div>
+              <div>
+                <div class="font-bold text-gray-900 dark:text-white text-sm">
+                  曾仕喬
+                </div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">
+                  設計師
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="bg-white dark:bg-dark-card p-6 rounded-2xl shadow-sm hover:shadow-md transition fade-in-section"
+            style="transition-delay: 200ms"
+          >
+            <div class="flex text-yellow-400 mb-4 text-sm">
+              <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i
+              ><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i
+              ><i class="fa-solid fa-star"></i>
+            </div>
+            <p class="text-gray-700 dark:text-gray-300 italic mb-6 text-sm">
+              "AI 建議的功能很酷，不是只有擋電話，還告訴我為什麼。"
+            </p>
+            <div class="flex items-center">
+              <div
+                class="w-10 h-10 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center text-green-600 font-bold mr-3"
+              >
+                何
+              </div>
+              <div>
+                <div class="font-bold text-gray-900 dark:text-white text-sm">
+                  何翰俊
+                </div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">學生</div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="bg-white dark:bg-dark-card p-6 rounded-2xl shadow-sm hover:shadow-md transition fade-in-section"
+            style="transition-delay: 300ms"
+          >
+            <div class="flex text-yellow-400 mb-4 text-sm">
+              <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i
+              ><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i
+              ><i class="fa-solid fa-star"></i>
+            </div>
+            <p class="text-gray-700 dark:text-gray-300 italic mb-6 text-sm">
+              "非常實用的工具，免費又沒有廣告，值得推薦。"
+            </p>
+            <div class="flex items-center">
+              <div
+                class="w-10 h-10 bg-orange-100 dark:bg-orange-900 rounded-full flex items-center justify-center text-orange-600 font-bold mr-3"
+              >
+                郭
+              </div>
+              <div>
+                <div class="font-bold text-gray-900 dark:text-white text-sm">
+                  郭俊逸
+                </div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">
+                  自由業者
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section
+      id="faq"
+      class="py-20 bg-gray-50 dark:bg-dark-bg border-t border-gray-100 dark:border-gray-800 transition-colors duration-300"
+    >
+      <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <h3
+          class="text-3xl font-bold text-center text-gray-900 dark:text-white mb-12 fade-in-section"
+        >
+          常見問題
+        </h3>
+        <div class="space-y-4 fade-in-section">
+          <div
+            class="bg-white dark:bg-dark-card rounded-xl shadow-sm overflow-hidden border border-gray-100 dark:border-gray-700"
+          >
+            <button
+              class="w-full px-6 py-4 text-left flex justify-between items-center focus:outline-none"
+              onclick="toggleFaq(this)"
+            >
+              <span class="font-semibold text-gray-900 dark:text-gray-100"
+                >這款 App 是免費的嗎？</span
+              >
+              <i
+                class="fa-solid fa-chevron-down text-gray-400 transition-transform duration-300"
+              ></i>
+            </button>
+            <div class="px-6 pb-4 hidden text-gray-600 dark:text-gray-400">
+              是的，ZeroSCAM
+              基礎版提供永久免費使用。我們的目標是普及防詐技術，保障大眾財產安全。
+            </div>
+          </div>
+          <div
+            class="bg-white dark:bg-dark-card rounded-xl shadow-sm overflow-hidden border border-gray-100 dark:border-gray-700"
+          >
+            <button
+              class="w-full px-6 py-4 text-left flex justify-between items-center focus:outline-none"
+              onclick="toggleFaq(this)"
+            >
+              <span class="font-semibold text-gray-900 dark:text-gray-100"
+                >你們會取得我的通話內容嗎？</span
+              >
+              <i
+                class="fa-solid fa-chevron-down text-gray-400 transition-transform duration-300"
+              ></i>
+            </button>
+            <div class="px-6 pb-4 hidden text-gray-600 dark:text-gray-400">
+              我們會將音訊特徵加密上傳至 AI
+              伺服器進行分析，但不會儲存您的完整通話錄音。分析完成後，數據即會被銷毀，僅保留您手機端的文字紀錄。
+            </div>
+          </div>
+          <div
+            class="bg-white dark:bg-dark-card rounded-xl shadow-sm overflow-hidden border border-gray-100 dark:border-gray-700"
+          >
+            <button
+              class="w-full px-6 py-4 text-left flex justify-between items-center focus:outline-none"
+              onclick="toggleFaq(this)"
+            >
+              <span class="font-semibold text-gray-900 dark:text-gray-100"
+                >這個程式會偷我個資嗎？</span
+              >
+              <i
+                class="fa-solid fa-chevron-down text-gray-400 transition-transform duration-300"
+              ></i>
+            </button>
+            <div class="px-6 pb-4 hidden text-gray-600 dark:text-gray-400">
+              絕對不會。ZeroSCAM
+              僅針對「通話內容」進行詐騙風險分析，不會讀取您的聯絡人、相簿或其他無關的隱私資料。
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section
+      class="py-20 bg-brand-600 dark:bg-brand-800 relative overflow-hidden transition-colors duration-300"
+    >
+      <div
+        class="absolute inset-0 bg-brand-700 dark:bg-brand-900 opacity-50 pattern-dots"
+      ></div>
+      <div
+        class="max-w-4xl mx-auto px-4 text-center relative z-10 fade-in-section"
+      >
+        <h2 class="text-3xl md:text-5xl font-bold text-white mb-6">
+          準備好掌控所有來電了嗎？
+        </h2>
+        <p class="text-brand-100 text-xl mb-10">
+          立即下載 ZeroSCAM，體驗前所未有的安全保障。
+        </p>
+        <a
+          href="app-release.apk"
+          class="inline-block bg-white text-brand-700 font-bold px-8 py-4 rounded-full shadow-lg hover:bg-gray-100 transition transform hover:-translate-y-1"
+        >
+          <i class="fa-solid fa-download mr-2"></i> 免費下載 APK
+        </a>
+      </div>
+    </section>
+
+    <footer
+      class="bg-gray-900 dark:bg-black text-white pt-16 pb-8 border-t border-gray-800"
+    >
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-12 mb-12">
+          <div class="col-span-1 md:col-span-2">
+            <div class="flex items-center gap-3 mb-4">
+              <img src="icon.png" class="w-8 h-8 rounded-lg" alt="Logo" />
+              <span class="font-bold text-xl">ZeroSCAM</span>
+            </div>
+            <p class="text-gray-400 text-sm leading-relaxed max-w-sm">
+              ZeroSCAM 是一款結合產學技術的防詐騙應用程式，致力於利用最新的 AI
+              技術，為民眾打造更安全的通訊環境。
+            </p>
+          </div>
+          <div>
+            <h4 class="font-bold mb-4">快速連結</h4>
+            <ul class="space-y-2 text-sm text-gray-400">
+              <li><a href="#features" class="hover:text-white">功能介紹</a></li>
+              <li>
+                <a href="#technology" class="hover:text-white">技術原理</a>
+              </li>
+              <li><a href="#reviews" class="hover:text-white">用戶評價</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 class="font-bold mb-4">聯絡我們</h4>
+            <ul class="space-y-2 text-sm text-gray-400">
+              <li>
+                <i class="fa-solid fa-envelope mr-2"></i> support@zeroscam.tw
+              </li>
+              <li>
+                <i class="fa-solid fa-location-dot mr-2"></i> 國立高雄大學
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="border-t border-gray-800 pt-8 text-center">
+          <p class="text-gray-500 text-sm mb-4">
+            國立高雄大學 ZeroSCAM 團隊<br />
+            <span class="mt-2 block text-gray-600">
+              A1115543 何翰俊 • A1115520 曾仕喬<br />
+              A1115532 朱俊傑 • A1115533 郭俊逸
+            </span>
+          </p>
+          <p class="text-gray-700 text-xs">
+            © 2025 ZeroSCAM. All rights reserved.
+          </p>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      // --- Dark Mode Logic ---
+      const themeToggleBtn = document.getElementById("theme-toggle");
+      const mobileThemeToggleBtn = document.getElementById(
+        "mobile-theme-toggle"
+      );
+
+      function setTheme(isDark) {
+        const html = document.documentElement;
+        if (isDark) {
+          html.classList.add("dark");
+          localStorage.setItem("theme", "dark");
+        } else {
+          html.classList.remove("dark");
+          localStorage.setItem("theme", "light");
+        }
+      }
+
+      const savedTheme = localStorage.getItem("theme");
+      const systemPrefersDark = window.matchMedia(
+        "(prefers-color-scheme: dark)"
+      ).matches;
+
+      if (savedTheme === "dark" || (!savedTheme && systemPrefersDark)) {
+        setTheme(true);
+      } else {
+        setTheme(false);
+      }
+
+      [themeToggleBtn, mobileThemeToggleBtn].forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const isDark = document.documentElement.classList.contains("dark");
+          setTheme(!isDark);
+        });
+      });
+
+      // --- UI Logic ---
+      const menuBtn = document.getElementById("mobile-menu-btn");
+      const menu = document.getElementById("mobile-menu");
+
+      menuBtn.addEventListener("click", () => {
+        menu.classList.toggle("hidden");
+      });
+
+      menu.querySelectorAll("a").forEach((link) => {
+        link.addEventListener("click", () => {
+          menu.classList.add("hidden");
+        });
+      });
+
+      function toggleFaq(button) {
+        const content = button.nextElementSibling;
+        const icon = button.querySelector(".fa-chevron-down");
+
+        if (content.classList.contains("hidden")) {
+          content.classList.remove("hidden");
+          icon.style.transform = "rotate(180deg)";
+        } else {
+          content.classList.add("hidden");
+          icon.style.transform = "rotate(0deg)";
+        }
+      }
+
+      const observer = new IntersectionObserver(
+        (entries, observer) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("is-visible");
+              observer.unobserve(entry.target);
+            }
+          });
+        },
+        { root: null, rootMargin: "0px", threshold: 0.1 }
+      );
+
+      document.querySelectorAll(".fade-in-section").forEach((section) => {
+        observer.observe(section);
+      });
+
+      window.addEventListener("scroll", () => {
+        const navbar = document.getElementById("navbar");
+        if (window.scrollY > 10) {
+          navbar.classList.add("shadow-md");
+          if (document.documentElement.classList.contains("dark")) {
+            navbar.classList.add("shadow-slate-800/50");
+          }
+        } else {
+          navbar.classList.remove("shadow-md");
+          navbar.classList.remove("shadow-slate-800/50");
+        }
+      });
+    </script>
+  </body>
+</html>
